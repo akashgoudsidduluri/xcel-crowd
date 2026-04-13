@@ -1,0 +1,151 @@
+.applicant-view {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  padding: 40px 20px;
+}
+
+.applicant-header {
+  background: white;
+  padding: 40px;
+  border-radius: 12px;
+  margin-bottom: 32px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+  max-width: 800px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.applicant-header h1 {
+  color: #333;
+  font-size: 32px;
+  margin-bottom: 8px;
+}
+
+.email {
+  color: #666;
+  font-size: 16px;
+}
+
+.applicant-details {
+  max-width: 800px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.detail-section {
+  background: white;
+  padding: 24px;
+  border-radius: 12px;
+  margin-bottom: 16px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
+}
+
+.detail-section h2 {
+  color: #333;
+  font-size: 18px;
+  margin-bottom: 16px;
+  border-bottom: 2px solid #667eea;
+  padding-bottom: 12px;
+}
+
+.status-badge {
+  display: inline-block;
+  padding: 12px 24px;
+  border-radius: 6px;
+  font-weight: bold;
+  font-size: 16px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.status-active {
+  background: #c8e6c9;
+  color: #2e7d32;
+}
+
+.status-waitlisted {
+  background: #ffe0b2;
+  color: #e65100;
+}
+
+.status-hired {
+  background: #bbdefb;
+  color: #1565c0;
+}
+
+.status-rejected {
+  background: #ffcdd2;
+  color: #c62828;
+}
+
+.status-decayed {
+  background: #ffe0b2;
+  color: #e65100;
+}
+
+dl {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 12px;
+}
+
+dt {
+  font-weight: 600;
+  color: #667eea;
+}
+
+dd {
+  color: #666;
+}
+
+dd.expiring-soon {
+  color: #d32f2f;
+  font-weight: 600;
+}
+
+.warning {
+  margin-left: 8px;
+  font-size: 14px;
+}
+
+.queue-position {
+  font-size: 20px;
+  color: #666;
+}
+
+.queue-position strong {
+  color: #667eea;
+  font-size: 28px;
+}
+
+.detail-section.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.detail-section.actions h2 {
+  margin-bottom: 16px;
+}
+
+.detail-section.actions button {
+  width: 100%;
+}
+
+@media (max-width: 600px) {
+  .applicant-view {
+    padding: 20px 16px;
+  }
+
+  .applicant-header {
+    padding: 24px;
+  }
+
+  .applicant-header h1 {
+    font-size: 24px;
+  }
+
+  dl {
+    grid-template-columns: 1fr;
+  }
+}
