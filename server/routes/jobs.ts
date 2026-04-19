@@ -10,6 +10,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { Pool } from 'pg';
 import { withTransaction } from '../db/transactions';
 import { generalLimiter } from '../middlewares/rateLimiter';
+import { getJobMetrics } from '../services/metrics.service';
 
 export function createJobRoutes(pool: Pool): Router {
   const router = Router();
@@ -106,6 +107,37 @@ export function createJobRoutes(pool: Pool): Router {
         });
 
         return res.status(200).json(result);
+      } catch (err) {
+        const error = err as Error;
+
+        if (error.message.includes('Job not found')) {
+          return res.status(404).json({ error: error.message });
+        }
+
+        return next(err);
+      }
+    }
+  );
+
+  /**
+   * GET /jobs/:id/metrics
+   * Detailed observation data and performance metrics
+   */
+  router.get(
+    '/jobs/:id/metrics',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const jobId = req.params.id as string;
+
+        if (!jobId) {
+          return res.status(400).json({ error: 'Invalid job ID' });
+        }
+
+        const metrics = await withTransaction(pool, async (ctx) => {
+          return await getJobMetrics(ctx, jobId);
+        });
+
+        return res.status(200).json(metrics);
       } catch (err) {
         const error = err as Error;
 

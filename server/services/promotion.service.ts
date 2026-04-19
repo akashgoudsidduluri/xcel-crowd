@@ -62,9 +62,10 @@ export async function promoteNext(
   // STEP 5: Validate transition
   validateTransition('WAITLISTED', 'PENDING_ACK');
 
-  // STEP 6: Calculate new deadline (10 minutes from now)
+  // STEP 6: Calculate new deadline (using job configuration)
+  const timeoutSeconds = job.ack_timeout_seconds || 30;
   const deadline = new Date();
-  deadline.setMinutes(deadline.getMinutes() + 10);
+  deadline.setSeconds(deadline.getSeconds() + timeoutSeconds);
   const ackDeadline = deadline.toISOString();
 
   // STEP 7: Move to PENDING_ACK

@@ -31,6 +31,21 @@ import { promoteNext, cascadePromotion } from './promotion.service';
 
 /**
  * ============================================================================
+ * ERROR CODES (PRODUCTION GRADE)
+ * ============================================================================
+ */
+export const ERROR_CODES = {
+  DUPLICATE_APPLICATION: 'APP_ERR_DUPLICATE',
+  CAPACITY_LIMIT_REACHED: 'APP_ERR_CAPACITY_FULL',
+  INVALID_TRANSITION: 'APP_ERR_INVALID_STATE_CHANGE',
+  ACK_DEADLINE_EXPIRED: 'APP_ERR_ACK_TIMEOUT',
+  JOB_NOT_FOUND: 'APP_ERR_JOB_NOT_FOUND',
+  APP_NOT_FOUND: 'APP_ERR_NOT_FOUND',
+  INVALID_EXIT: 'APP_ERR_INVALID_EXIT',
+};
+
+/**
+ * ============================================================================
  * APPLY TO JOB (CRITICAL TRANSACTIONAL FLOW)
  * ============================================================================
  * 
@@ -65,10 +80,7 @@ export async function applyToJob(
     // STEP 2: Check for duplicate application (same job + applicant)
     const isDuplicate = await checkDuplicateApplication(ctx, jobId, applicantId);
     if (isDuplicate) {
-      throw new Error(
-        `DUPLICATE_APPLICATION: Applicant already applied to this job. ` +
-        `Email: ${email}, Job ID: ${jobId}`
-      );
+      throw new Error(ERROR_CODES.DUPLICATE_APPLICATION);
     }
 
     // STEP 3: Lock job for capacity control
@@ -85,8 +97,9 @@ export async function applyToJob(
     // STEP 5 & 6: Decide: PENDING_ACK or WAITLISTED
     if (availableCapacity > 0) {
       status = 'PENDING_ACK';
+      const timeout = job.ack_timeout_seconds || 30;
       const deadline = new Date();
-      deadline.setMinutes(deadline.getMinutes() + 10);
+      deadline.setSeconds(deadline.getSeconds() + timeout);
       ackDeadline = deadline.toISOString();
     } else {
       status = 'WAITLISTED';
@@ -128,8 +141,8 @@ export async function applyToJob(
       ack_deadline: ackDeadline,
       message:
         status === 'PENDING_ACK'
-          ? `You are now pending acknowledgment. Please acknowledge within 10 minutes.`
-          : `You have been added to waitlist at position ${queuePosition}. We will notify you when a slot opens.`,
+          ? `Status: PENDING_ACK. Acknowledgment required within ${job.ack_timeout_seconds || 30} seconds.`
+          : `Status: WAITLISTED. Queue position: ${queuePosition}.`,
     };
   });
 }
@@ -171,7 +184,7 @@ export async function acknowledgeApplication(
 
     // STEP 4: Check deadline
     if (app.ack_deadline && new Date(app.ack_deadline) < new Date()) {
-      throw new Error(`ACK_DEADLINE_EXPIRED: Acknowledgment window has closed for application ${applicationId}`);
+      throw new Error(ERROR_CODES.ACK_DEADLINE_EXPIRED);
     }
 
     // STEP 5: Update status

@@ -38,7 +38,7 @@ export function createApplicantRoutes(pool: Pool): Router {
 
       return res.status(201).json(result);
     } catch (err) {
-      next(err);
+      return next(err);
     }
   });
 
@@ -60,7 +60,7 @@ export function createApplicantRoutes(pool: Pool): Router {
       
       return res.json(result);
     } catch (err) {
-      next(err);
+      return next(err);
     }
   });
 

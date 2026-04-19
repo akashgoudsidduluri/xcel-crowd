@@ -60,7 +60,7 @@ export function createApplicationRoutes(pool: Pool): Router {
         return res.status(404).json({ error: error.message });
       }
 
-      next(err);
+      return next(err);
     }
   });
 
@@ -99,7 +99,7 @@ export function createApplicationRoutes(pool: Pool): Router {
           return res.status(404).json({ error: error.message });
         }
 
-        next(err);
+        return next(err);
       }
     }
   );
@@ -135,7 +135,7 @@ export function createApplicationRoutes(pool: Pool): Router {
           return res.status(404).json({ error: error.message });
         }
 
-        next(err);
+        return next(err);
       }
     }
   );
@@ -175,11 +175,7 @@ export function createApplicationRoutes(pool: Pool): Router {
           return res.status(409).json({ error: error.message });
         }
 
-        if (error.message.includes('Application not found')) {
-          return res.status(404).json({ error: error.message });
-        }
-
-        next(err);
+        return next(err);
       }
     }
   );
@@ -214,7 +210,7 @@ export function createApplicationRoutes(pool: Pool): Router {
           return res.status(404).json({ error: error.message });
         }
 
-        next(err);
+        return next(err);
       }
     }
   );
