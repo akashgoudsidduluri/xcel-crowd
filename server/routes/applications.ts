@@ -24,6 +24,7 @@ import {
 import { getQueueStats } from '../services/promotion.service';
 import { getAuditTrail } from '../services/auditLog.service';
 import { withTransaction } from '../db/transactions';
+import { applyLimiter, actionLimiter } from '../middlewares/rateLimiter';
 
 export function createApplicationRoutes(pool: Pool): Router {
   const router = Router();
@@ -34,7 +35,7 @@ export function createApplicationRoutes(pool: Pool): Router {
    * 
    * BODY: { email, name, jobId }
    */
-  router.post('/apply', async (req: Request, res: Response, next: NextFunction) => {
+  router.post('/apply', applyLimiter, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { email, name, jobId } = req.body;
 
@@ -71,6 +72,7 @@ export function createApplicationRoutes(pool: Pool): Router {
    */
   router.post(
     '/applications/:id/ack',
+    actionLimiter,
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const applicationId = req.params.id;
@@ -110,6 +112,7 @@ export function createApplicationRoutes(pool: Pool): Router {
    */
   router.post(
     '/applications/:id/withdraw',
+    actionLimiter,
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const applicationId = req.params.id;
@@ -146,6 +149,7 @@ export function createApplicationRoutes(pool: Pool): Router {
    */
   router.post(
     '/applications/:id/exit',
+    actionLimiter,
     async (req: Request, res: Response, next: NextFunction) => {
       try {
         const applicationId = req.params.id;

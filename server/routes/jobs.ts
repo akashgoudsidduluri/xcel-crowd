@@ -9,6 +9,7 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { Pool } from 'pg';
 import { withTransaction } from '../db/transactions';
+import { generalLimiter } from '../middlewares/rateLimiter';
 
 export function createJobRoutes(pool: Pool): Router {
   const router = Router();
@@ -19,7 +20,7 @@ export function createJobRoutes(pool: Pool): Router {
    * 
    * BODY: { title, capacity }
    */
-  router.post('/jobs', async (req: Request, res: Response, next: NextFunction) => {
+  router.post('/jobs', generalLimiter, async (req: Request, res: Response, next: NextFunction) => {
     try {
       const { title, capacity, created_by } = req.body;
 
