@@ -1,0 +1,13 @@
+-- ============================================================================
+-- PRODUCTION GRADE ATS - DATABASE SCHEMA (DEPRECATED)
+-- This file is kept for reference but all tables are now created by migrations 001-004
+-- DO NOT add table definitions here - they are defined in the numbered migrations above
+-- ============================================================================
+
+-- All schema definitions have been moved to:
+-- 001_create_jobs.sql
+-- 002_create_applicants.sql  
+-- 003_create_applications.sql
+-- 004_create_event_logs.sql
+--
+-- This file is kept for backward compatibility only

@@ -8,9 +8,16 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [showForm, setShowForm] = useState(false);
-  const [formData, setFormData] = useState({ title: '', capacity: '' });
+  const [formData, setFormData] = useState({ title: '', capacity: '', created_by: '' });
+  const [currentUserEmail, setCurrentUserEmail] = useState('');
 
   useEffect(() => {
+    // Try to get current user email from localStorage
+    const storedEmail = localStorage.getItem('currentUserEmail');
+    if (storedEmail) {
+      setCurrentUserEmail(storedEmail);
+    }
+    
     loadJobs();
     const interval = setInterval(loadJobs, 15000); // Poll every 15s
     return () => clearInterval(interval);
@@ -36,9 +43,15 @@ export default function Dashboard() {
       return;
     }
 
+    const email = formData.created_by || currentUserEmail;
+    if (email) {
+      localStorage.setItem('currentUserEmail', email);
+      setCurrentUserEmail(email);
+    }
+
     try {
-      await createJob(formData.title, parseInt(formData.capacity));
-      setFormData({ title: '', capacity: '' });
+      await createJob(formData.title, parseInt(formData.capacity), email || null);
+      setFormData({ title: '', capacity: '', created_by: '' });
       setShowForm(false);
       await loadJobs();
     } catch (err) {
@@ -50,6 +63,7 @@ export default function Dashboard() {
     <div className="dashboard">
       <header className="dashboard-header">
         <h1>Next In Line — ATS Pipeline</h1>
+        {currentUserEmail && <span className="current-user">Logged in as: {currentUserEmail}</span>}
         <button 
           className="btn btn-primary" 
           onClick={() => setShowForm(!showForm)}
@@ -60,6 +74,12 @@ export default function Dashboard() {
 
       {showForm && (
         <form className="job-form" onSubmit={handleCreateJob}>
+          <input
+            type="email"
+            placeholder="Your Email (optional)"
+            value={formData.created_by}
+            onChange={(e) => setFormData({ ...formData, created_by: e.target.value })}
+          />
           <input
             type="text"
             placeholder="Job Title"
@@ -85,7 +105,7 @@ export default function Dashboard() {
 
       <div className="jobs-grid">
         {jobs.map((job) => (
-          <JobCard key={job.id} job={job} onUpdate={loadJobs} />
+          <JobCard key={job.id} job={job} currentUserEmail={currentUserEmail} onUpdate={loadJobs} />
         ))}
       </div>
 

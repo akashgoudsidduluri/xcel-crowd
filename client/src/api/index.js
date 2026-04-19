@@ -9,8 +9,8 @@ const apiClient = axios.create({
 
 // Jobs
 export const getJobs = () => apiClient.get('/jobs');
-export const createJob = (title, capacity) =>
-  apiClient.post('/jobs', { title, capacity });
+export const createJob = (title, capacity, created_by) =>
+  apiClient.post('/jobs', { title, capacity, created_by });
 export const getJob = (id) => apiClient.get(`/jobs/${id}`);
 export const getJobPipeline = (id) => apiClient.get(`/jobs/${id}/pipeline`);
 

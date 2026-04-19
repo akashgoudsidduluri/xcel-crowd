@@ -2,12 +2,15 @@ import React, { useState, useEffect } from 'react';
 import { getJobPipeline, createApplication } from '../api/index';
 import '../styles/JobCard.css';
 
-export default function JobCard({ job, onUpdate }) {
+export default function JobCard({ job, currentUserEmail, onUpdate }) {
   const [pipeline, setPipeline] = useState(null);
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({ name: '', email: '' });
   const [applying, setApplying] = useState(false);
+
+  // Determine if current user created this job
+  const isJobCreator = job.created_by && currentUserEmail && job.created_by === currentUserEmail;
 
   useEffect(() => {
     loadPipeline();
@@ -67,6 +70,7 @@ export default function JobCard({ job, onUpdate }) {
     <div className="job-card">
       <header className="card-header">
         <h3>{job.title}</h3>
+        {isJobCreator && <span className="badge-creator">You created this</span>}
         <div className="capacity-bar">
           <div className="capacity-used" style={{
             width: `${(job.active_count / job.capacity) * 100}%`,
@@ -123,15 +127,20 @@ export default function JobCard({ job, onUpdate }) {
       ) : null}
 
       <div className="card-actions">
-        <button
-          className="btn btn-small"
-          onClick={() => setShowForm(!showForm)}
-        >
-          {showForm ? 'Cancel' : '+ Apply'}
-        </button>
+        {!isJobCreator && (
+          <button
+            className="btn btn-small"
+            onClick={() => setShowForm(!showForm)}
+          >
+            {showForm ? 'Cancel' : '+ Apply'}
+          </button>
+        )}
+        {isJobCreator && (
+          <span className="text-muted">You cannot apply to your own job</span>
+        )}
       </div>
 
-      {showForm && (
+      {showForm && !isJobCreator && (
         <form className="apply-form" onSubmit={handleApply}>
           <input
             type="text"

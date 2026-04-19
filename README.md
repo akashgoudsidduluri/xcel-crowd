@@ -461,3 +461,14 @@ startDecayWorker(120 * 1000); // 2min for relaxed decay
 ## 📝 License
 
 MIT
+
+---
+
+## ⚖️ Tradeoffs Made
+- **Raw SQL vs. ORM:** I chose to use raw `pg` queries rather than an ORM (like Drizzle or Prisma) to maintain absolute, granular control over the `SELECT FOR UPDATE` locking mechanism without abstraction overhead. The tradeoff is more verbose code and manually constructed SQL strings.
+- **Manual Polling vs. Event-Driven Decay:** The inactivity decay cascade runs via a `setInterval` continuous polling worker. The tradeoff is that the decay isn't executed natively in real-time right at the millisecond of expiration, but it vastly simplifies the architecture by not requiring a background job queue manager like BullMQ or Redis.
+
+## 🚀 What I'd Change With More Time
+- **Comprehensive Automated Testing:** Implement automated integration tests (e.g., using Jest and Supertest) rather than relying on manual `curl` sequences and database inspection workflows.
+- **Strict Input Validation:** Add strict input validation middleware (e.g., using Zod or Joi) to catch malformed requests before they hit the database layer.
+- **TypeScript Migration:** Port the codebase to TypeScript for better developer experience, stricter type safety, and to avoid runtime errors when tracking application state.
