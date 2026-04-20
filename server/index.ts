@@ -21,6 +21,7 @@ import { createJobRoutes } from './routes/jobs';
 import { createApplicantRoutes } from './routes/applicants';
 import { startDecayWorker, stopDecayWorker } from './services/decayWorker';
 import { pool } from './db/pool';
+import { errorHandler } from './middlewares/errorHandler';
 
 /**
  * Create and configure Express app
@@ -66,26 +67,8 @@ export function createApp(pool: Pool): Express {
   app.use('/', createJobRoutes(pool));
   app.use('/', createApplicantRoutes(pool));
 
-  // 404 handler
-  app.use((req: Request, res: Response) => {
-    res.status(404).json({
-      error: `Route not found: ${req.method} ${req.path}`,
-    });
-  });
-
-  // Global error handler
-  app.use((err: any, req: Request, res: Response, next: NextFunction) => {
-    console.error('[ERROR]', err.message);
-    console.error(err.stack);
-
-    const status = err.status || 500;
-    const message = err.message || 'Internal server error';
-
-    res.status(status).json({
-      error: message,
-      ...(process.env.NODE_ENV === 'development' && { stack: err.stack }),
-    });
-  });
+  // Error handler middleware (must be last)
+  app.use(errorHandler);
 
   return app;
 }

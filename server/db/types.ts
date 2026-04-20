@@ -5,7 +5,7 @@
  * Centralized type definitions for type-safe database operations.
  */
 
-import { PoolClient } from 'pg';
+import { PoolClient, QueryResult } from 'pg';
 import { ApplicationStatus } from '../stateMachine';
 
 export interface Job {
@@ -50,6 +50,9 @@ export interface AuditLog {
  */
 export interface TransactionContext {
   client: PoolClient;
+  query: (text: string, values?: any[]) => Promise<QueryResult>;
+  commit: () => Promise<void>;
+  rollback: () => Promise<void>;
 }
 
 /**

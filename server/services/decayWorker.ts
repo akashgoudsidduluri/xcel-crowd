@@ -68,6 +68,15 @@ export function stopDecayWorker(): void {
  * 
  * Batches in chunks of 100 to avoid long transactions
  */
+/**
+ * Process all expired PENDING_ACK applications atomically
+ * 
+ * Uses SELECT FOR UPDATE SKIP LOCKED for efficiency and safety:
+ * - Atomically claims expired applications
+ * - Multiple instances don't re-process (SKIP LOCKED)
+ * - Simple single transaction (no nested locks or advisory locks)
+ * - Cascade promotion fills all freed slots immediately
+ */
 async function processDecayedApplications(pool: Pool): Promise<void> {
   if (isRunning) {
     return;
@@ -76,102 +85,70 @@ async function processDecayedApplications(pool: Pool): Promise<void> {
   isRunning = true;
 
   try {
-    // STEP 1: Multi-instance safety (Advisory lock)
-    // Runs outside the job loop to prevent multiple workers from running at once
-    const advisoryLockObtained = await withTransaction(pool, async (ctx) => {
-      const lockResult = await ctx.query('SELECT pg_try_advisory_lock(12345) as obtained');
-      return lockResult.rows[0].obtained;
-    });
+    // SINGLE TRANSACTION: Atomically decay expired apps and fill slots
+    await withTransaction(pool, async (ctx) => {
+      // STEP 1: Find and lock expired applications for this worker
+      // FOR UPDATE SKIP LOCKED ensures:
+      // - Other worker instances won't re-process these rows
+      // - We only process what we can claim atomically
+      const expiredAppsResult = await ctx.query(
+        `SELECT id, job_id, penalty_count
+         FROM applications
+         WHERE status = 'PENDING_ACK' 
+           AND ack_deadline < NOW()
+         ORDER BY ack_deadline ASC
+         FOR UPDATE SKIP LOCKED
+         LIMIT 100`
+      );
 
-    if (!advisoryLockObtained) return;
-
-    // STEP 2: Find jobs with expired applications (NO LOCK yet)
-    const affectedJobsResult = await pool.query(
-      `SELECT DISTINCT job_id 
-       FROM applications 
-       WHERE status = 'PENDING_ACK' AND ack_deadline < NOW()
-       LIMIT 10` // Process 10 jobs per cycle for safety
-    );
-
-    if (affectedJobsResult.rows.length === 0) return;
-
-    // STEP 3: Process each job independently with correct lock order
-    for (const { job_id } of affectedJobsResult.rows) {
-      try {
-        await withTransaction(pool, async (ctx) => {
-          // LOCK ORDER: 1. Job, 2. Application
-          // 1. Lock Job
-          await getJobForUpdate(ctx, job_id);
-
-          // 2. Lock specific expired applications for this job
-          const expiredApps = await ctx.query(
-            `SELECT id, job_id, status, penalty_count
-             FROM applications
-             WHERE job_id = $1 AND status = 'PENDING_ACK' AND ack_deadline < NOW()
-             FOR UPDATE SKIP LOCKED
-             LIMIT 50`,
-            [job_id]
-          );
-
-          if (expiredApps.rows.length === 0) return;
-
-          // 3. Process the decay
-          for (const app of expiredApps.rows) {
-            await processExpiredApplicationInternal(ctx, app);
-          }
-
-          // 4. Trigger cascade promotion (Inside the same TX)
-          await cascadePromotion(ctx, job_id);
-        });
-      } catch (err) {
-        console.error(`[DECAY WORKER] Failed to process job ${job_id}:`, err);
+      if (expiredAppsResult.rows.length === 0) {
+        return; // No expired applications to process
       }
-    }
+
+      // STEP 2: Group by job for batch processing
+      const jobMap = new Map<string, Array<{ id: string; penalty_count: number }>>();
+      for (const app of expiredAppsResult.rows) {
+        if (!jobMap.has(app.job_id)) {
+          jobMap.set(app.job_id, []);
+        }
+        jobMap.get(app.job_id)!.push({ id: app.id, penalty_count: app.penalty_count });
+      }
+
+      // STEP 3: Process each job (within same transaction)
+      for (const [jobId, apps] of jobMap.entries()) {
+        // Lock job for capacity check in cascade
+        await getJobForUpdate(ctx, jobId);
+
+        // Move expired apps to waitlist with penalty
+        const appIds = apps.map(a => a.id);
+        await ctx.query(
+          `UPDATE applications
+           SET status = 'WAITLISTED',
+               penalty_count = penalty_count + 1,
+               ack_deadline = NULL,
+               updated_at = NOW()
+           WHERE id = ANY($1)`,
+          [appIds]
+        );
+
+        // Log transitions efficiently
+        for (const app of apps) {
+          await logTransition(ctx, app.id, 'PENDING_ACK', 'WAITLISTED', {
+            reason: 'ack_deadline_expired',
+            penalty_count: app.penalty_count + 1,
+          });
+        }
+
+        // CRITICAL: Cascade promotion fills freed slots atomically
+        // This is safe because everything is in ONE transaction
+        await cascadePromotion(ctx, jobId);
+      }
+    });
   } catch (err) {
     console.error('[DECAY WORKER] Worker cycle failed:', err);
   } finally {
     isRunning = false;
   }
-}
-
-/**
- * Internal logic for processing a single expired application
- * MUST be called inside a transaction
- */
-async function processExpiredApplicationInternal(
-  ctx: TransactionContext,
-  app: any
-): Promise<void> {
-  // Idempotency check 
-  if (app.status !== 'PENDING_ACK') return;
-
-  // STEP 1: Validate transition
-  validateTransition('PENDING_ACK', 'WAITLISTED');
-
-  // STEP 2: Increment penalty
-  const currentPenalty = app.penalty_count || 0;
-  const newPenalty = currentPenalty + 1;
-
-  // STEP 3: Get max position for job
-  const maxPos = await getMaxQueuePosition(ctx, app.job_id);
-  const newQueuePosition = maxPos + 1 + newPenalty;
-
-  // STEP 4: Move to WAITLISTED
-  await ctx.query(
-    `UPDATE applications
-     SET status = $1, queue_position = $2, penalty_count = $3, ack_deadline = NULL, updated_at = NOW()
-     WHERE id = $4`,
-    ['WAITLISTED', newQueuePosition, newPenalty, app.id]
-  );
-
-  // STEP 5: Reindex queue
-  await reindexQueuePositions(ctx, app.job_id);
-
-  // STEP 6: Log transition
-  await logTransition(ctx, app.id, 'PENDING_ACK', 'WAITLISTED', {
-    reason: 'acknowledgment_deadline_expired',
-    penaltyCount: newPenalty,
-  });
 }
 
 /**

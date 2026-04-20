@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { getJobPipeline, createApplication } from '../api/index';
 import '../styles/JobCard.css';
 
@@ -9,12 +9,16 @@ export default function JobCard({ job, currentUserEmail, onUpdate }) {
   const [formData, setFormData] = useState({ name: '', email: '' });
   const [applying, setApplying] = useState(false);
 
+  useEffect(() => {
+    if (job?.id) {
+      loadPipeline();
+    }
+  }, [job?.id]);
+
+  if (!job) return null;
+
   // Determine if current user created this job
   const isJobCreator = job.created_by && currentUserEmail && job.created_by === currentUserEmail;
-
-  useEffect(() => {
-    loadPipeline();
-  }, [job.id]);
 
   const loadPipeline = async () => {
     try {
@@ -87,27 +91,27 @@ export default function JobCard({ job, currentUserEmail, onUpdate }) {
         <div className="pipeline-content">
           <div className="stats">
             <div className="stat">
-              <span className="stat-value">{pipeline.summary.active}</span>
+              <span className="stat-value">{pipeline.summary?.active ?? 0}</span> {/* Use optional chaining */}
               <span className="stat-label">Active</span>
             </div>
             <div className="stat">
-              <span className="stat-value">{pipeline.summary.waitlisted}</span>
+              <span className="stat-value">{pipeline.summary?.waitlisted ?? 0}</span> {/* Use optional chaining */}
               <span className="stat-label">Waitlisted</span>
             </div>
             <div className="stat">
-              <span className="stat-value">{pipeline.summary.hired}</span>
+              <span className="stat-value">{pipeline.summary?.hired ?? 0}</span> {/* Use optional chaining */}
               <span className="stat-label">Hired</span>
             </div>
             <div className="stat">
-              <span className="stat-value">{pipeline.summary.rejected}</span>
+              <span className="stat-value">{pipeline.summary?.rejected ?? 0}</span> {/* Use optional chaining */}
               <span className="stat-label">Rejected</span>
             </div>
           </div>
 
-          {pipeline.applicants.length > 0 && (
+          {pipeline.applicants?.length > 0 && ( /* Use optional chaining */
             <div className="applicants-list">
               <h4>Recent Applicants</h4>
-              {pipeline.applicants.slice(0, 5).map((app) => (
+              {pipeline.applicants?.slice(0, 5).map((app) => ( /* Use optional chaining */
                 <div key={app.id} className="applicant-item">
                   <div className="app-status" style={{
                     backgroundColor: getStatusColor(app.status),

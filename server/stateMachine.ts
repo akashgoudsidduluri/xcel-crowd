@@ -14,6 +14,8 @@
  * VIOLATION = PRODUCTION FAILURE
  */
 
+import { StateTransitionError } from './errors';
+
 export type ApplicationStatus =
   | 'WAITLISTED'
   | 'PENDING_ACK'
@@ -79,8 +81,10 @@ export function validateTransition(
 ): void {
   // Self-transitions not allowed
   if (fromStatus === toStatus) {
-    throw new Error(
-      `INVALID_TRANSITION: Cannot transition to same state: ${fromStatus} → ${toStatus}`
+    throw new StateTransitionError(
+      fromStatus,
+      toStatus,
+      'Cannot transition to the same state'
     );
   }
 
@@ -89,9 +93,10 @@ export function validateTransition(
   
   if (!allowedTransitions || !allowedTransitions.has(toStatus)) {
     const allowed = Array.from(allowedTransitions || []);
-    throw new Error(
-      `INVALID_TRANSITION: ${fromStatus} → ${toStatus}. ` +
-      `Allowed from ${fromStatus}: ${allowed.length > 0 ? allowed.join(', ') : 'NONE (terminal)'}`
+    throw new StateTransitionError(
+      fromStatus,
+      toStatus,
+      `Allowed next states: ${allowed.length > 0 ? allowed.join(', ') : 'NONE (terminal state)'}`
     );
   }
 }

@@ -11,14 +11,8 @@
  */
 
 import { Pool, PoolClient, QueryResult } from 'pg';
-import { ApplicationStatus } from '../stateMachine';
-
-export interface TransactionContext {
-  client: PoolClient;
-  query: (text: string, values?: any[]) => Promise<QueryResult>;
-  commit: () => Promise<void>;
-  rollback: () => Promise<void>;
-}
+import { AppError, ERROR_CODES } from '../errors';
+import { TransactionContext, ApplicationStatus } from './types';
 
 /**
  * Start a new transaction
@@ -33,7 +27,6 @@ export async function beginTransaction(pool: Pool): Promise<TransactionContext> 
     // Set statement timeout to 30 seconds per statement
     // Prevents long-running cascades from holding connections indefinitely
     await client.query('SET LOCAL statement_timeout = \'30s\'');
-    
   } catch (err) {
     client.release();
     throw err;
@@ -96,14 +89,18 @@ export async function withTransaction<T>(
 export async function getJobForUpdate(
   ctx: TransactionContext,
   jobId: string
-): Promise<any> {
+): Promise<{ id: string; title: string; capacity: number; ack_timeout_seconds?: number }> {
   const result = await ctx.query(
-    'SELECT id, title, capacity FROM jobs WHERE id = $1 FOR UPDATE',
+    'SELECT id, title, capacity, ack_timeout_seconds FROM jobs WHERE id = $1 FOR UPDATE',
     [jobId]
   );
   
   if (result.rows.length === 0) {
-    throw new Error(`Job not found: ${jobId}`);
+    throw new AppError(
+      `Job with ID ${jobId} not found`,
+      404,
+      ERROR_CODES.JOB_NOT_FOUND
+    );
   }
   
   return result.rows[0];
@@ -276,7 +273,11 @@ export async function getApplication(
   );
   
   if (result.rows.length === 0) {
-    throw new Error(`Application not found: ${applicationId}`);
+    throw new AppError(
+      `Application with ID ${applicationId} not found`,
+      404,
+      ERROR_CODES.APP_NOT_FOUND
+    );
   }
   
   return result.rows[0];
@@ -298,7 +299,11 @@ export async function getApplicationForUpdate(
   );
   
   if (result.rows.length === 0) {
-    throw new Error(`Application not found: ${applicationId}`);
+    throw new AppError(
+      `Application with ID ${applicationId} not found`,
+      404,
+      ERROR_CODES.APP_NOT_FOUND
+    );
   }
   
   return result.rows[0];

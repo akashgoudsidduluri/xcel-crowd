@@ -2,6 +2,7 @@ import { Router, Request, Response, NextFunction } from 'express';
 import { Pool } from 'pg';
 import { z } from 'zod';
 import { withTransaction } from '../db/transactions';
+import { ValidationError, NotFoundError } from '../errors';
 
 /**
  * ============================================================================
@@ -27,10 +28,7 @@ export function createApplicantRoutes(pool: Pool): Router {
       const parsed = createApplicantSchema.safeParse(req.body);
 
       if (!parsed.success) {
-        return res.status(400).json({
-          error: 'INVALID_INPUT',
-          details: parsed.error.issues,
-        });
+        throw new ValidationError('Invalid applicant data', parsed.error.issues);
       }
 
       const { name, email } = parsed.data;
@@ -42,8 +40,8 @@ export function createApplicantRoutes(pool: Pool): Router {
           ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name
           RETURNING *
         `;
-        const res = await ctx.query(query, [name, email]);
-        return res.rows[0];
+        const queryResult = await ctx.query(query, [name, email]);
+        return queryResult.rows[0];
       });
 
       return res.status(201).json(result);
@@ -60,12 +58,12 @@ export function createApplicantRoutes(pool: Pool): Router {
     try {
       const { id } = req.params as { id: string };
       const result = await withTransaction(pool, async (ctx) => {
-        const res = await ctx.query('SELECT * FROM applicants WHERE id = $1', [id]);
-        return res.rows[0];
+        const queryResult = await ctx.query('SELECT * FROM applicants WHERE id = $1', [id]);
+        return queryResult.rows[0];
       });
 
       if (!result) {
-        return res.status(404).json({ error: 'Applicant not found' });
+        throw new NotFoundError('Applicant', id);
       }
       
       return res.json(result);
@@ -81,12 +79,12 @@ export function createApplicantRoutes(pool: Pool): Router {
   router.get('/', async (req: Request, res: Response, next: NextFunction) => {
     try {
       const result = await withTransaction(pool, async (ctx) => {
-        const res = await ctx.query(
+        const queryResult = await ctx.query(
           `SELECT id, name, email, created_at
            FROM applicants
            ORDER BY created_at DESC`
         );
-        return res.rows;
+        return queryResult.rows;
       });
       
       return res.json(result);

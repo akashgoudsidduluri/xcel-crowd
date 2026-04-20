@@ -12,21 +12,26 @@
  * 6. Race condition safety
  */
 
-// Mock the database pool so we don't hit the real database during CI
+import { describe, test, expect, jest } from '@jest/globals';
+import { pool } from '../db/pool';
+
+// @ts-ignore - Jest mock setup for testing
 jest.mock('../db/pool', () => {
+  const mockClient = {
+    // @ts-ignore - Mock for testing
+    query: jest.fn().mockResolvedValue({ rows: [] }),
+    // @ts-ignore - Mock for testing
+    release: jest.fn(),
+  };
+
   const mPool = {
-    connect: jest.fn().mockResolvedValue({
-      query: jest.fn().mockResolvedValue({ rows: [] }),
-      release: jest.fn(),
-    }),
-    query: jest.fn(),
+    // @ts-ignore - Mock for testing
+    connect: jest.fn().mockResolvedValue(mockClient),
+    // @ts-ignore - Mock for testing
+    query: jest.fn().mockResolvedValue({ rows: [] }),
   };
   return { pool: mPool };
 });
-
-import { Pool } from 'pg';
-import { pool } from '../db/pool';
-import { describe, test, expect, jest } from '@jest/globals';
 import {
   applyToJob,
   acknowledgeApplication,

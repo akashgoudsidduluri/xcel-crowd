@@ -51,12 +51,11 @@ export async function runMigrations(): Promise<void> {
       UNIQUE(job_id, applicant_id)
     );
 
-    CREATE TABLE IF NOT EXISTS event_logs (
+    CREATE TABLE IF NOT EXISTS audit_logs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       application_id UUID REFERENCES applications(id) ON DELETE CASCADE,
-      event_type TEXT NOT NULL,
-      old_status TEXT,
-      new_status TEXT,
+      from_status TEXT,
+      to_status TEXT,
       metadata JSONB,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );

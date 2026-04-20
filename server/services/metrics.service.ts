@@ -1,5 +1,6 @@
 import { PoolClient } from 'pg';
 import { TransactionContext } from '../db/transactions';
+import { AppError } from '../errors';
 
 /**
  * ============================================================================
@@ -43,7 +44,11 @@ export async function getJobMetrics(
   );
   
   if (jobResult.rows.length === 0) {
-    throw new Error(`Job not found: ${jobId}`);
+    throw new AppError(
+      `Job not found: ${jobId}`,
+      404,
+      'JOB_NOT_FOUND'
+    );
   }
   
   const job = jobResult.rows[0];

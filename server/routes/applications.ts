@@ -26,6 +26,7 @@ import { getQueueStats } from '../services/promotion.service';
 import { getAuditTrail } from '../services/auditLog.service';
 import { withTransaction } from '../db/transactions';
 import { applyLimiter, actionLimiter } from '../middlewares/rateLimiter';
+import { AppError, ValidationError } from '../errors';
 
 export function createApplicationRoutes(pool: Pool): Router {
   const router = Router();
@@ -54,10 +55,7 @@ export function createApplicationRoutes(pool: Pool): Router {
       const parsed = applySchema.safeParse(req.body);
 
       if (!parsed.success) {
-        return res.status(400).json({
-          error: 'INVALID_INPUT',
-          details: parsed.error.issues,
-        });
+        throw new ValidationError('Invalid application data', parsed.error.issues);
       }
 
       const { email, name, jobId } = parsed.data;
@@ -66,16 +64,6 @@ export function createApplicationRoutes(pool: Pool): Router {
 
       return res.status(201).json(result);
     } catch (err) {
-      const error = err as Error;
-
-      if (error.message.includes('DUPLICATE_APPLICATION')) {
-        return res.status(409).json({ error: error.message });
-      }
-
-      if (error.message.includes('Job not found')) {
-        return res.status(404).json({ error: error.message });
-      }
-
       return next(err);
     }
   });
@@ -94,10 +82,7 @@ export function createApplicationRoutes(pool: Pool): Router {
         const parsedId = idSchema.safeParse(req.params.id);
 
         if (!parsedId.success) {
-          return res.status(400).json({
-            error: 'INVALID_ID',
-            details: parsedId.error.issues,
-          });
+          throw new ValidationError('Invalid application ID format', parsedId.error.issues);
         }
 
         const applicationId = parsedId.data;
@@ -106,20 +91,6 @@ export function createApplicationRoutes(pool: Pool): Router {
 
         return res.status(200).json(result);
       } catch (err) {
-        const error = err as Error;
-
-        if (error.message.includes('INVALID_TRANSITION')) {
-          return res.status(409).json({ error: error.message });
-        }
-
-        if (error.message.includes('ACK_DEADLINE_EXPIRED')) {
-          return res.status(410).json({ error: error.message });
-        }
-
-        if (error.message.includes('Application not found')) {
-          return res.status(404).json({ error: error.message });
-        }
-
         return next(err);
       }
     }
@@ -139,10 +110,7 @@ export function createApplicationRoutes(pool: Pool): Router {
         const parsedId = idSchema.safeParse(req.params.id);
 
         if (!parsedId.success) {
-          return res.status(400).json({
-            error: 'INVALID_ID',
-            details: parsedId.error.issues,
-          });
+          throw new ValidationError('Invalid application ID format', parsedId.error.issues);
         }
 
         const applicationId = parsedId.data;
@@ -151,16 +119,6 @@ export function createApplicationRoutes(pool: Pool): Router {
 
         return res.status(200).json(result);
       } catch (err) {
-        const error = err as Error;
-
-        if (error.message.includes('INVALID_WITHDRAWAL')) {
-          return res.status(409).json({ error: error.message });
-        }
-
-        if (error.message.includes('Application not found')) {
-          return res.status(404).json({ error: error.message });
-        }
-
         return next(err);
       }
     }
@@ -182,17 +140,11 @@ export function createApplicationRoutes(pool: Pool): Router {
         const parsedBody = exitSchema.safeParse(req.body);
 
         if (!parsedId.success) {
-          return res.status(400).json({
-            error: 'INVALID_ID',
-            details: parsedId.error.issues,
-          });
+          throw new ValidationError('Invalid application ID format', parsedId.error.issues);
         }
 
         if (!parsedBody.success) {
-          return res.status(400).json({
-            error: 'INVALID_INPUT',
-            details: parsedBody.error.issues,
-          });
+          throw new ValidationError('Invalid exit status provided', parsedBody.error.issues);
         }
 
         const applicationId = parsedId.data;
@@ -202,12 +154,6 @@ export function createApplicationRoutes(pool: Pool): Router {
 
         return res.status(200).json(result);
       } catch (err) {
-        const error = err as Error;
-
-        if (error.message.includes('INVALID_EXIT')) {
-          return res.status(409).json({ error: error.message });
-        }
-
         return next(err);
       }
     }
@@ -224,10 +170,7 @@ export function createApplicationRoutes(pool: Pool): Router {
         const parsedId = idSchema.safeParse(req.params.id);
 
         if (!parsedId.success) {
-          return res.status(400).json({
-            error: 'INVALID_ID',
-            details: parsedId.error.issues,
-          });
+          throw new ValidationError('Invalid application ID format', parsedId.error.issues);
         }
 
         const applicationId = parsedId.data;
@@ -242,12 +185,6 @@ export function createApplicationRoutes(pool: Pool): Router {
           auditTrail: trail,
         });
       } catch (err) {
-        const error = err as Error;
-
-        if (error.message.includes('Application not found')) {
-          return res.status(404).json({ error: error.message });
-        }
-
         return next(err);
       }
     }
@@ -264,7 +201,11 @@ export function createApplicationRoutes(pool: Pool): Router {
         const jobId = req.params.jobId;
 
         if (!jobId) {
-          return res.status(400).json({ error: 'Invalid job ID' });
+          throw new AppError(
+            'Job ID is required to fetch queue statistics',
+            400,
+            'INVALID_INPUT'
+          );
         }
 
         const stats = await getQueueStats(pool, jobId as string);

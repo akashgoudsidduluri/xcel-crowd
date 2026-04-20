@@ -240,27 +240,40 @@ export async function getJobAuditStats(
   decayedApplications: number;
   hiredApplications: number;
 }> {
-  const query = `
-    SELECT 
+  // Get transition statistics
+  const transitionQuery = `
+    SELECT
       COUNT(*) as total_transitions,
-      COUNT(DISTINCT al.application_id) as unique_applications,
       json_object_agg(
         CONCAT(al.from_status, ' → ', al.to_status),
         COUNT(*)
-      ) as transition_counts
+      ) FILTER (WHERE al.from_status IS NOT NULL) as transition_counts
     FROM audit_logs al
     JOIN applications app ON al.application_id = app.id
     WHERE app.job_id = $1
   `;
 
-  const result = await client.query(query, [jobId]);
-  const row = result.rows[0];
+  const transitionResult = await client.query(transitionQuery, [jobId]);
+  const transitionRow = transitionResult.rows[0];
+
+  // Get application status counts
+  const statusQuery = `
+    SELECT
+      SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) as active_applications,
+      SUM(CASE WHEN status = 'INACTIVE' THEN 1 ELSE 0 END) as decayed_applications,
+      SUM(CASE WHEN status = 'HIRED' THEN 1 ELSE 0 END) as hired_applications
+    FROM applications
+    WHERE job_id = $1
+  `;
+
+  const statusResult = await client.query(statusQuery, [jobId]);
+  const statusRow = statusResult.rows[0];
 
   return {
-    totalTransitions: parseInt(row.total_transitions, 10),
-    transitionCounts: row.transition_counts || {},
-    activeApplications: 0, // Query separately if needed
-    decayedApplications: 0,
-    hiredApplications: 0,
+    totalTransitions: parseInt(transitionRow.total_transitions, 10),
+    transitionCounts: transitionRow.transition_counts || {},
+    activeApplications: parseInt(statusRow.active_applications || 0, 10),
+    decayedApplications: parseInt(statusRow.decayed_applications || 0, 10),
+    hiredApplications: parseInt(statusRow.hired_applications || 0, 10),
   };
 }

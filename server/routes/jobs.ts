@@ -12,6 +12,7 @@ import { z } from 'zod';
 import { withTransaction } from '../db/transactions';
 import { generalLimiter } from '../middlewares/rateLimiter';
 import { getJobMetrics } from '../services/metrics.service';
+import { ValidationError, NotFoundError, AppError } from '../errors';
 
 export function createJobRoutes(pool: Pool): Router {
   const router = Router();
@@ -34,10 +35,7 @@ export function createJobRoutes(pool: Pool): Router {
       const parsed = createJobSchema.safeParse(req.body);
 
       if (!parsed.success) {
-        return res.status(400).json({
-          error: 'INVALID_INPUT',
-          details: parsed.error.issues,
-        });
+        throw new ValidationError('Invalid job data', parsed.error.issues);
       }
 
       const { title, capacity, created_by } = parsed.data;
@@ -67,7 +65,7 @@ export function createJobRoutes(pool: Pool): Router {
         const jobId = req.params.id as string;
 
         if (!jobId) {
-          return res.status(400).json({ error: 'Invalid job ID' });
+          throw new ValidationError('Job ID is required');
         }
 
         const result = await withTransaction(pool, async (ctx) => {
@@ -78,7 +76,7 @@ export function createJobRoutes(pool: Pool): Router {
           );
 
           if (jobResult.rows.length === 0) {
-            throw new Error(`Job not found: ${jobId}`);
+            throw new NotFoundError('Job', jobId);
           }
 
           const job = jobResult.rows[0];
@@ -119,12 +117,6 @@ export function createJobRoutes(pool: Pool): Router {
 
         return res.status(200).json(result);
       } catch (err) {
-        const error = err as Error;
-
-        if (error.message.includes('Job not found')) {
-          return res.status(404).json({ error: error.message });
-        }
-
         return next(err);
       }
     }
@@ -141,7 +133,7 @@ export function createJobRoutes(pool: Pool): Router {
         const jobId = req.params.id as string;
 
         if (!jobId) {
-          return res.status(400).json({ error: 'Invalid job ID' });
+          throw new ValidationError('Job ID is required');
         }
 
         // Check if job exists first
@@ -151,19 +143,35 @@ export function createJobRoutes(pool: Pool): Router {
         );
 
         if (jobCheck.rows.length === 0) {
-          return res.status(404).json({ error: 'Job not found' });
+          throw new NotFoundError('Job', jobId);
         }
 
         const result = await withTransaction(pool, async (ctx) => {
-          // Get job
-          const jobResult = await ctx.query(
-            'SELECT id, title, capacity FROM jobs WHERE id = $1',
-            [jobId]
-          );
+          // Get job and summary statistics for the UI
+          const [jobResult, statsResult] = await Promise.all([
+            ctx.query('SELECT id, title, capacity FROM jobs WHERE id = $1', [jobId]),
+            ctx.query(
+              `SELECT
+                SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) as active,
+                SUM(CASE WHEN status = 'WAITLISTED' THEN 1 ELSE 0 END) as waitlisted,
+                SUM(CASE WHEN status = 'HIRED' THEN 1 ELSE 0 END) as hired,
+                SUM(CASE WHEN status = 'REJECTED' THEN 1 ELSE 0 END) as rejected
+               FROM applications
+               WHERE job_id = $1`,
+              [jobId]
+            )
+          ]);
 
-          // Get applications ordered by queue position
+          const stats = statsResult.rows[0];
+          const summary = {
+            active: parseInt(stats.active || 0, 10),
+            waitlisted: parseInt(stats.waitlisted || 0, 10),
+            hired: parseInt(stats.hired || 0, 10),
+            rejected: parseInt(stats.rejected || 0, 10)
+          };
+
           const applicationsResult = await ctx.query(
-            `SELECT 
+            `SELECT
                a.id, a.status, a.queue_position, a.created_at as applied_at, a.ack_deadline as acknowledged_at,
                ap.name, ap.email
              FROM applications a
@@ -175,14 +183,14 @@ export function createJobRoutes(pool: Pool): Router {
 
           return {
             job: jobResult.rows[0],
-            applications: applicationsResult.rows,
+            summary,
+            applicants: applicationsResult.rows,
           };
         });
 
         return res.status(200).json(result);
       } catch (err) {
-        next(err);
-        return;
+        return next(err);
       }
     }
   );
@@ -198,7 +206,11 @@ export function createJobRoutes(pool: Pool): Router {
         const jobId = req.params.id as string;
 
         if (!jobId) {
-          return res.status(400).json({ error: 'Invalid job ID' });
+          throw new AppError(
+            'Job ID is required to fetch metrics',
+            400,
+            'INVALID_INPUT'
+          );
         }
 
         const metrics = await withTransaction(pool, async (ctx) => {
@@ -207,14 +219,10 @@ export function createJobRoutes(pool: Pool): Router {
 
         return res.status(200).json(metrics);
       } catch (err) {
-        const error = err as Error;
-
-        if (error.message.includes('Job not found')) {
-          return res.status(404).json({ error: error.message });
-        }
-
         return next(err);
       }
+
+      return;
     }
   );
 
@@ -248,6 +256,9 @@ export function createJobRoutes(pool: Pool): Router {
 
             return {
               ...job,
+              active_count: parseInt(stats.active || 0, 10), // Ensure this matches frontend expectation
+              pending_ack: parseInt(stats.pending_ack || 0, 10),
+              waitlist: parseInt(stats.waitlist || 0, 10),
               occupancy,
               utilization: job.capacity > 0 ? occupancy / job.capacity : 0,
               isAtCapacity: occupancy >= job.capacity,

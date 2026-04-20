@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { getJobs, createJob } from '../api/index';
 import JobCard from '../components/JobCard';
 import '../styles/Dashboard.css';
@@ -104,7 +104,7 @@ export default function Dashboard() {
       {loading && <p className="loading">Loading jobs...</p>}
 
       <div className="jobs-grid">
-        {jobs.map((job) => (
+        {jobs?.map((job) => (
           <JobCard key={job.id} job={job} currentUserEmail={currentUserEmail} onUpdate={loadJobs} />
         ))}
       </div>

@@ -26,23 +26,10 @@ import {
 } from '../db/transactions';
 import { validateTransition } from '../stateMachine';
 import { ApplicationStatus } from '../stateMachine';
+import { AppError, ERROR_CODES } from '../errors';
 import { logTransition } from './auditLog.service';
 import { promoteNext, cascadePromotion } from './promotion.service';
 
-/**
- * ============================================================================
- * ERROR CODES (PRODUCTION GRADE)
- * ============================================================================
- */
-export const ERROR_CODES = {
-  DUPLICATE_APPLICATION: 'APP_ERR_DUPLICATE',
-  CAPACITY_LIMIT_REACHED: 'APP_ERR_CAPACITY_FULL',
-  INVALID_TRANSITION: 'APP_ERR_INVALID_STATE_CHANGE',
-  ACK_DEADLINE_EXPIRED: 'APP_ERR_ACK_TIMEOUT',
-  JOB_NOT_FOUND: 'APP_ERR_JOB_NOT_FOUND',
-  APP_NOT_FOUND: 'APP_ERR_NOT_FOUND',
-  INVALID_EXIT: 'APP_ERR_INVALID_EXIT',
-};
 
 /**
  * ============================================================================
@@ -80,7 +67,11 @@ export async function applyToJob(
     // STEP 2: Check for duplicate application (same job + applicant)
     const isDuplicate = await checkDuplicateApplication(ctx, jobId, applicantId);
     if (isDuplicate) {
-      throw new Error(ERROR_CODES.DUPLICATE_APPLICATION);
+      throw new AppError(
+        'User already applied to this job',
+        409,
+        ERROR_CODES.DUPLICATE_APPLICATION
+      );
     }
 
     // STEP 3: Lock job for capacity control
@@ -95,7 +86,7 @@ export async function applyToJob(
     let ackDeadline: string | null = null;
 
     // STEP 5 & 6: Decide: PENDING_ACK or WAITLISTED
-    if (availableCapacity > 0) {
+    if (availableCapacity > 0 && job.ack_timeout_seconds !== undefined) { // Ensure ack_timeout_seconds is available
       status = 'PENDING_ACK';
       const timeout = job.ack_timeout_seconds || 30;
       const deadline = new Date();
@@ -184,7 +175,11 @@ export async function acknowledgeApplication(
 
     // STEP 4: Check deadline
     if (app.ack_deadline && new Date(app.ack_deadline) < new Date()) {
-      throw new Error(ERROR_CODES.ACK_DEADLINE_EXPIRED);
+      throw new AppError(
+        'Acknowledgment deadline has expired',
+        400,
+        ERROR_CODES.ACK_DEADLINE_EXPIRED
+      );
     }
 
     // STEP 5: Update status
@@ -239,7 +234,12 @@ export async function withdrawApplication(
 
     // Idempotency check
     if (app.status === 'INACTIVE') {
-      return { applicationId, status: 'INACTIVE' as ApplicationStatus, jobId, wasOccupyingSlot: false };
+      return {
+        applicationId,
+        status: 'INACTIVE' as ApplicationStatus,
+        message: 'Application already withdrawn.',
+        cascadePromoted: 0,
+      };
     }
 
     // Validate state transition
@@ -265,42 +265,23 @@ export async function withdrawApplication(
       await reindexQueuePositions(ctx, jobId);
     }
 
-    // 6. Immediate Promotion (Single)
-    let promotedId: string | null = null;
+    // 6. Atomic promotion: Move to next slot if one was freed
+    // CRITICAL: Done inside same transaction to ensure atomicity
+    let promotedCount = 0;
     if (wasOccupyingSlot) {
       const promotion = await promoteNext(ctx, jobId);
-      if (promotion) promotedId = promotion.applicationId;
+      if (promotion) promotedCount = 1;
     }
 
     return {
       applicationId,
       status: 'INACTIVE' as ApplicationStatus,
-      jobId,
-      wasOccupyingSlot,
-      promotedId,
+      message: 'Your application has been withdrawn.',
+      cascadePromoted: promotedCount,
     };
   });
 
-  // STEP 2: After transaction commits, trigger optional full cascade
-  let totalPromoted = result.promotedId ? 1 : 0;
-  if (result.wasOccupyingSlot) {
-    try {
-      // Start a fresh transaction for the remaining cascade to keep locks short
-      const cascadeResult = await withTransaction(pool, async (ctx) => {
-        return await cascadePromotion(ctx, result.jobId);
-      });
-      totalPromoted += (cascadeResult.totalPromoted || 0);
-    } catch (err) {
-      console.warn(`Full cascade promotion after withdrawal failed: ${err}`);
-    }
-  }
-
-  return {
-    applicationId: result.applicationId,
-    status: result.status,
-    message: 'Your application has been withdrawn.',
-    cascadePromoted: totalPromoted,
-  };
+  return result;
 }
 
 /**
@@ -322,7 +303,11 @@ export async function exitApplication(
   cascadePromoted?: number;
 }> {
   if (exitStatus !== 'HIRED' && exitStatus !== 'REJECTED') {
-    throw new Error(`INVALID_EXIT_STATUS: Must be HIRED or REJECTED, got ${exitStatus}`);
+    throw new AppError(
+      `Invalid exit status. Must be HIRED or REJECTED, got ${exitStatus}`,
+      400,
+      ERROR_CODES.INVALID_EXIT
+    );
   }
 
   // STEP 1: Exit inside transaction
@@ -339,14 +324,20 @@ export async function exitApplication(
 
     // Idempotency check
     if (app.status === exitStatus) {
-      return { applicationId, status: exitStatus, jobId, promotedId: null };
+      return {
+        applicationId,
+        status: exitStatus,
+        message: `Application already marked as ${exitStatus}.`,
+        cascadePromoted: 0,
+      };
     }
 
     // Can only exit from ACTIVE
     if (app.status !== 'ACTIVE') {
-      throw new Error(
-        `INVALID_EXIT: Cannot transition to ${exitStatus} from ${app.status}. ` +
-        `Can only exit from ACTIVE.`
+      throw new AppError(
+        `Invalid state transition from ${app.status} to ${exitStatus}: Can only exit from ACTIVE status`,
+        400,
+        ERROR_CODES.INVALID_TRANSITION
       );
     }
 
@@ -364,36 +355,21 @@ export async function exitApplication(
       reason: `recruiter_${exitStatus.toLowerCase()}`,
     });
 
-    // 5. Immediate Promotion (Single)
-    let promotedId: string | null = null;
+    // 5. Atomic promotion: Fill the freed slot immediately
+    // CRITICAL: Done inside same transaction to ensure atomicity
+    let promotedCount = 0;
     const promotion = await promoteNext(ctx, jobId);
-    if (promotion) promotedId = promotion.applicationId;
+    if (promotion) promotedCount = 1;
 
     return {
       applicationId,
       status: exitStatus,
-      jobId,
-      promotedId,
+      message: `Application marked as ${exitStatus}.`,
+      cascadePromoted: promotedCount,
     };
   });
 
-  // STEP 2: After transaction commits, trigger optional full cascade
-  let totalPromoted = result.promotedId ? 1 : 0;
-  try {
-    const cascadeResult = await withTransaction(pool, async (ctx) => {
-      return await cascadePromotion(ctx, result.jobId);
-    });
-    totalPromoted += (cascadeResult.totalPromoted || 0);
-  } catch (err) {
-    console.warn(`Full cascade promotion after exit failed: ${err}`);
-  }
-
-  return {
-    applicationId: result.applicationId,
-    status: result.status as ApplicationStatus,
-    message: `Application marked as ${exitStatus}.`,
-    cascadePromoted: totalPromoted,
-  };
+  return result;
 }
 
 /**

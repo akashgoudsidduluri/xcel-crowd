@@ -15,6 +15,7 @@ import { Pool } from 'pg';
 import { withTransaction, TransactionContext, getNextWaitlistedForPromotion, countActiveAndPendingAck, reindexQueuePositions, getJobForUpdate } from '../db/transactions';
 import { validateTransition } from '../stateMachine';
 import { logTransition } from './auditLog.service';
+import { AppError } from '../errors';
 
 
 /**
@@ -122,29 +123,66 @@ export async function cascadePromotion(
   totalPromoted: number;
   remainingInWaitlist: number;
 }> {
-  const promoted: Array<{ applicationId: string; applicantId: string }> = [];
+  // STEP 1: Get job capacity using the locking query
+  const job = await getJobForUpdate(ctx, jobId);
+  const capacity = job.capacity;
 
-  // Keep promoting until no more capacity or no more waitlist
-  while (true) {
-    const promotion = await promoteNext(ctx, jobId);
+  // STEP 2: Count current active + pending ack
+  const currentCountResult = await ctx.query(
+    `SELECT COUNT(*) as count FROM applications
+     WHERE job_id = $1 AND status IN ('ACTIVE', 'PENDING_ACK')`,
+    [jobId]
+  );
+  const currentCount = parseInt(currentCountResult.rows[0].count, 10);
+  const availableSlots = capacity - currentCount;
 
-    if (!promotion) {
-      break; // Either capacity full or no more waitlist
-    }
+  if (availableSlots <= 0) {
+    // No capacity available
+    const waitlistResult = await ctx.query(
+      `SELECT COUNT(*) as count FROM applications WHERE job_id = $1 AND status = 'WAITLISTED'`,
+      [jobId]
+    );
+    return {
+      promoted: [],
+      totalPromoted: 0,
+      remainingInWaitlist: parseInt(waitlistResult.rows[0].count, 10),
+    };
+  }
 
-    promoted.push({
-      applicationId: promotion.applicationId,
-      applicantId: promotion.applicantId,
+  // STEP 3: Promote the next N applications in queue order using a single query
+  const promoteResult = await ctx.query(
+    `WITH ranked_waitlist AS (
+       SELECT id, applicant_id,
+              ROW_NUMBER() OVER (ORDER BY queue_position ASC, created_at ASC) as rank
+       FROM applications
+       WHERE job_id = $1 AND status = 'WAITLISTED'
+     ),
+     to_promote AS (
+       SELECT id, applicant_id FROM ranked_waitlist WHERE rank <= $2
+     )
+     UPDATE applications
+     SET status = 'PENDING_ACK',
+         ack_deadline = NOW() + INTERVAL '30 seconds',
+         updated_at = NOW()
+     WHERE id IN (SELECT id FROM to_promote)
+     RETURNING id, applicant_id`,
+    [jobId, availableSlots]
+  );
+
+  const promoted = promoteResult.rows.map(row => ({
+    applicationId: row.id,
+    applicantId: row.applicant_id,
+  }));
+
+  // STEP 4: Log transitions for each promoted application
+  for (const app of promoted) {
+    await logTransition(ctx, app.applicationId, 'WAITLISTED', 'PENDING_ACK', {
+      reason: 'cascade_promotion',
     });
   }
 
-  // Get final counts
-  const activeResult = await ctx.query(
-    `SELECT COUNT(*) as count FROM applications WHERE job_id = $1 AND status IN ('ACTIVE', 'PENDING_ACK')`,
-    [jobId]
-  );
-
-  const waitlistResult = await ctx.query(
+  // STEP 5: Get final waitlist count
+  const finalWaitlistResult = await ctx.query(
     `SELECT COUNT(*) as count FROM applications WHERE job_id = $1 AND status = 'WAITLISTED'`,
     [jobId]
   );
@@ -152,7 +190,7 @@ export async function cascadePromotion(
   return {
     promoted,
     totalPromoted: promoted.length,
-    remainingInWaitlist: parseInt(waitlistResult.rows[0].count, 10),
+    remainingInWaitlist: parseInt(finalWaitlistResult.rows[0].count, 10),
   };
 }
 
@@ -177,7 +215,11 @@ export async function getQueueStats(
     );
 
     if (jobResult.rows.length === 0) {
-      throw new Error(`Job not found: ${jobId}`);
+      throw new AppError(
+        `Job not found: ${jobId}`,
+        404,
+        'JOB_NOT_FOUND'
+      );
     }
 
     const capacity = jobResult.rows[0].capacity;
