@@ -1,5 +1,5 @@
 const request = require('supertest');
-const app = require('../index');
+const { createApp } = require('../index');
 const { pool } = require('../db/pool');
 
 // Mock the database pool so we don't hit the real database during CI
@@ -19,6 +19,8 @@ jest.mock('../services/decayWorker', () => ({
   startDecayWorker: jest.fn(),
   stopDecayWorker: jest.fn(),
 }));
+
+const app = createApp(pool);
 
 describe('API Route Validations (Zod Integration)', () => {
   
@@ -62,20 +64,22 @@ describe('API Route Validations (Zod Integration)', () => {
   describe('POST /applications', () => {
     it('should validate email format and reject invalid UUIDs', async () => {
       const res = await request(app)
-        .post('/applications')
+        .post('/apply')
         .send({ 
           name: 'John Doe', 
           email: 'not-an-email', 
-          job_id: 'invalid-string' 
+          jobId: 'invalid-uuid' 
         });
-
+        
       expect(res.statusCode).toBe(400);
       expect(res.body.code).toBe('VALIDATION_ERROR');
       expect(res.body.details).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ path: 'email', message: 'Invalid email format' }),
-          expect.objectContaining({ path: 'job_id', message: 'Invalid job ID format' })
+          expect.objectContaining({ path: ['email'] }),
+          expect.objectContaining({ path: ['jobId'] })
         ])
+      );
+    });
       );
     });
   });

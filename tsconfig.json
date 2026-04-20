@@ -3,8 +3,8 @@
     "target": "ES2020",
     "module": "commonjs",
     "lib": ["ES2020", "DOM"],
-    "outDir": "./dist",
-    "rootDir": "./",
+    "outDir": "./server/dist",
+    "rootDir": "./server",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -33,6 +33,7 @@
   ],
   "exclude": [
     "node_modules",
-    "dist"
+    "dist",
+    "server/__tests__"
   ]
 }

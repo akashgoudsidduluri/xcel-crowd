@@ -22,7 +22,7 @@ export const getApplicant = (id) => apiClient.get(`/applicants/${id}`);
 
 // Applications
 export const createApplication = (name, email, jobId) =>
-  apiClient.post('/applications', { name, email, job_id: jobId });
+  apiClient.post('/apply', { name, email, jobId });
 export const getApplication = (id) => apiClient.get(`/applications/${id}`);
 export const acknowledgeApplication = (id) =>
   apiClient.post(`/applications/${id}/ack`);

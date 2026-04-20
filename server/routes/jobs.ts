@@ -8,12 +8,20 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { Pool } from 'pg';
+import { z } from 'zod';
 import { withTransaction } from '../db/transactions';
 import { generalLimiter } from '../middlewares/rateLimiter';
 import { getJobMetrics } from '../services/metrics.service';
 
 export function createJobRoutes(pool: Pool): Router {
   const router = Router();
+
+  // Zod schema
+  const createJobSchema = z.object({
+    title: z.string().min(1),
+    capacity: z.number().int().positive(),
+    created_by: z.string().optional(),
+  });
 
   /**
    * POST /jobs
@@ -23,18 +31,21 @@ export function createJobRoutes(pool: Pool): Router {
    */
   router.post('/jobs', generalLimiter, async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { title, capacity, created_by } = req.body;
+      const parsed = createJobSchema.safeParse(req.body);
 
-      if (!title || !capacity || capacity < 1) {
+      if (!parsed.success) {
         return res.status(400).json({
-          error: 'Missing or invalid fields: title (string), capacity (positive integer)',
+          error: 'INVALID_INPUT',
+          details: parsed.error.issues,
         });
       }
+
+      const { title, capacity, created_by } = parsed.data;
 
       const result = await withTransaction(pool, async (ctx) => {
         const jobResult = await ctx.query(
           'INSERT INTO jobs (title, capacity, created_by) VALUES ($1, $2, $3) RETURNING id, title, capacity, created_by, created_at',
-          [title, parseInt(capacity, 10), created_by || null]
+          [title, capacity, created_by || null]
         );
         return jobResult.rows[0];
       });
@@ -115,6 +126,63 @@ export function createJobRoutes(pool: Pool): Router {
         }
 
         return next(err);
+      }
+    }
+  );
+
+  /**
+   * GET /jobs/:id/pipeline
+   * Get the application pipeline for a job
+   */
+  router.get(
+    '/jobs/:id/pipeline',
+    async (req: Request, res: Response, next: NextFunction) => {
+      try {
+        const jobId = req.params.id as string;
+
+        if (!jobId) {
+          return res.status(400).json({ error: 'Invalid job ID' });
+        }
+
+        // Check if job exists first
+        const jobCheck = await pool.query(
+          'SELECT id FROM jobs WHERE id = $1',
+          [jobId]
+        );
+
+        if (jobCheck.rows.length === 0) {
+          return res.status(404).json({ error: 'Job not found' });
+        }
+
+        const result = await withTransaction(pool, async (ctx) => {
+          // Get job
+          const jobResult = await ctx.query(
+            'SELECT id, title, capacity FROM jobs WHERE id = $1',
+            [jobId]
+          );
+
+          // Get applications ordered by queue position
+          const applicationsResult = await ctx.query(
+            `SELECT 
+               a.id, a.status, a.queue_position, a.created_at as applied_at, a.ack_deadline as acknowledged_at,
+               ap.name, ap.email
+             FROM applications a
+             JOIN applicants ap ON a.applicant_id = ap.id
+             WHERE a.job_id = $1
+             ORDER BY a.queue_position ASC, a.created_at ASC`,
+            [jobId]
+          );
+
+          return {
+            job: jobResult.rows[0],
+            applications: applicationsResult.rows,
+          };
+        });
+
+        return res.status(200).json(result);
+      } catch (err) {
+        next(err);
+        return;
       }
     }
   );

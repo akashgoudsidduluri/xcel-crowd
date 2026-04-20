@@ -10,6 +10,7 @@
  * Use this for compliance, debugging, and state reconstruction
  */
 
+import { PoolClient } from 'pg';
 import { TransactionContext } from '../db/transactions';
 import { ApplicationStatus, getTransitionDescription } from '../stateMachine';
 
@@ -192,7 +193,14 @@ export async function verifyAuditChain(
   client: PoolClient,
   applicationId: string
 ): Promise<{ valid: boolean; errors: string[] }> {
-  const events = await getApplicationAuditHistory(client, applicationId);
+  const result = await client.query(
+    `SELECT id, application_id, from_status, to_status, metadata, created_at
+     FROM audit_logs
+     WHERE application_id = $1
+     ORDER BY created_at ASC`,
+    [applicationId]
+  );
+  const events = result.rows;
   const errors: string[] = [];
 
   if (events.length === 0) {

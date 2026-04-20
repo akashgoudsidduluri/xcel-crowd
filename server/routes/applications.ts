@@ -14,6 +14,7 @@
 
 import { Router, Request, Response, NextFunction } from 'express';
 import { Pool } from 'pg';
+import { z } from 'zod';
 import {
   applyToJob,
   acknowledgeApplication,
@@ -29,6 +30,19 @@ import { applyLimiter, actionLimiter } from '../middlewares/rateLimiter';
 export function createApplicationRoutes(pool: Pool): Router {
   const router = Router();
 
+  // Zod schemas
+  const applySchema = z.object({
+    email: z.string().email(),
+    name: z.string().min(1),
+    jobId: z.string().uuid(),
+  });
+
+  const idSchema = z.string().uuid();
+
+  const exitSchema = z.object({
+    status: z.enum(['HIRED', 'REJECTED']),
+  });
+
   /**
    * POST /apply
    * Applicant applies to a job
@@ -37,14 +51,16 @@ export function createApplicationRoutes(pool: Pool): Router {
    */
   router.post('/apply', applyLimiter, async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { email, name, jobId } = req.body;
+      const parsed = applySchema.safeParse(req.body);
 
-      // Validate input
-      if (!email || !name || !jobId) {
+      if (!parsed.success) {
         return res.status(400).json({
-          error: 'Missing required fields: email, name, jobId',
+          error: 'INVALID_INPUT',
+          details: parsed.error.issues,
         });
       }
+
+      const { email, name, jobId } = parsed.data;
 
       const result = await applyToJob(pool, email, name, jobId);
 
@@ -75,13 +91,18 @@ export function createApplicationRoutes(pool: Pool): Router {
     actionLimiter,
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const applicationId = req.params.id;
+        const parsedId = idSchema.safeParse(req.params.id);
 
-        if (!applicationId) {
-          return res.status(400).json({ error: 'Invalid application ID' });
+        if (!parsedId.success) {
+          return res.status(400).json({
+            error: 'INVALID_ID',
+            details: parsedId.error.issues,
+          });
         }
 
-        const result = await acknowledgeApplication(pool, applicationId as string);
+        const applicationId = parsedId.data;
+
+        const result = await acknowledgeApplication(pool, applicationId);
 
         return res.status(200).json(result);
       } catch (err) {
@@ -115,13 +136,18 @@ export function createApplicationRoutes(pool: Pool): Router {
     actionLimiter,
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const applicationId = req.params.id;
+        const parsedId = idSchema.safeParse(req.params.id);
 
-        if (!applicationId) {
-          return res.status(400).json({ error: 'Invalid application ID' });
+        if (!parsedId.success) {
+          return res.status(400).json({
+            error: 'INVALID_ID',
+            details: parsedId.error.issues,
+          });
         }
 
-        const result = await withdrawApplication(pool, applicationId as string, 'applicant_request');
+        const applicationId = parsedId.data;
+
+        const result = await withdrawApplication(pool, applicationId, 'applicant_request');
 
         return res.status(200).json(result);
       } catch (err) {
@@ -152,20 +178,27 @@ export function createApplicationRoutes(pool: Pool): Router {
     actionLimiter,
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const applicationId = req.params.id;
-        const { status } = req.body;
+        const parsedId = idSchema.safeParse(req.params.id);
+        const parsedBody = exitSchema.safeParse(req.body);
 
-        if (!applicationId) {
-          return res.status(400).json({ error: 'Invalid application ID' });
-        }
-
-        if (!status || (status !== 'HIRED' && status !== 'REJECTED')) {
+        if (!parsedId.success) {
           return res.status(400).json({
-            error: 'Body must include status: "HIRED" or "REJECTED"',
+            error: 'INVALID_ID',
+            details: parsedId.error.issues,
           });
         }
 
-        const result = await exitApplication(pool, applicationId as string, status);
+        if (!parsedBody.success) {
+          return res.status(400).json({
+            error: 'INVALID_INPUT',
+            details: parsedBody.error.issues,
+          });
+        }
+
+        const applicationId = parsedId.data;
+        const { status } = parsedBody.data;
+
+        const result = await exitApplication(pool, applicationId, status);
 
         return res.status(200).json(result);
       } catch (err) {
@@ -188,15 +221,20 @@ export function createApplicationRoutes(pool: Pool): Router {
     '/applications/:id',
     async (req: Request, res: Response, next: NextFunction) => {
       try {
-        const applicationId = req.params.id;
+        const parsedId = idSchema.safeParse(req.params.id);
 
-        if (!applicationId) {
-          return res.status(400).json({ error: 'Invalid application ID' });
+        if (!parsedId.success) {
+          return res.status(400).json({
+            error: 'INVALID_ID',
+            details: parsedId.error.issues,
+          });
         }
 
-        const app = await getApplicationDetails(pool, applicationId as string);
+        const applicationId = parsedId.data;
+
+        const app = await getApplicationDetails(pool, applicationId);
         const trail = await withTransaction(pool, async (ctx) => {
-          return await getAuditTrail(ctx, applicationId as string);
+          return await getAuditTrail(ctx, applicationId);
         });
 
         return res.status(200).json({

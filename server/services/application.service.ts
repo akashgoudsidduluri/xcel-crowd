@@ -266,7 +266,7 @@ export async function withdrawApplication(
     }
 
     // 6. Immediate Promotion (Single)
-    let promotedId: number | null = null;
+    let promotedId: string | null = null;
     if (wasOccupyingSlot) {
       const promotion = await promoteNext(ctx, jobId);
       if (promotion) promotedId = promotion.applicationId;
@@ -365,7 +365,7 @@ export async function exitApplication(
     });
 
     // 5. Immediate Promotion (Single)
-    let promotedId: number | null = null;
+    let promotedId: string | null = null;
     const promotion = await promoteNext(ctx, jobId);
     if (promotion) promotedId = promotion.applicationId;
 

@@ -17,7 +17,7 @@
  */
 
 import { Pool } from 'pg';
-import { withTransaction, TransactionContext, getExpiredPendingAck, reindexQueuePositions, getJobForUpdate } from '../db/transactions';
+import { withTransaction, TransactionContext, reindexQueuePositions, getJobForUpdate, getMaxQueuePosition } from '../db/transactions';
 import { validateTransition } from '../stateMachine';
 import { logTransition } from './auditLog.service';
 import { cascadePromotion } from './promotion.service';
@@ -183,6 +183,6 @@ export function getWorkerStatus(): {
 } {
   return {
     isRunning: !!workerInterval,
-    isActive,
+    isActive: !!workerInterval,
   };
 }

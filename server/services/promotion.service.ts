@@ -118,11 +118,11 @@ export async function cascadePromotion(
   ctx: TransactionContext,
   jobId: string
 ): Promise<{
-  promoted: Array<{ applicationId: string; applicantId: number }>;
+  promoted: Array<{ applicationId: string; applicantId: string }>;
   totalPromoted: number;
   remainingInWaitlist: number;
 }> {
-  const promoted: Array<{ applicationId: string; applicantId: number }> = [];
+  const promoted: Array<{ applicationId: string; applicantId: string }> = [];
 
   // Keep promoting until no more capacity or no more waitlist
   while (true) {

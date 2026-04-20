@@ -1,5 +1,6 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import { Pool } from 'pg';
+import { z } from 'zod';
 import { withTransaction } from '../db/transactions';
 
 /**
@@ -11,19 +12,28 @@ import { withTransaction } from '../db/transactions';
 export function createApplicantRoutes(pool: Pool): Router {
   const router = Router();
 
+  // Zod schema
+  const createApplicantSchema = z.object({
+    name: z.string().min(1),
+    email: z.string().email(),
+  });
+
   /**
    * POST /applicants
    * Create a new applicant
    */
   router.post('/', async (req: Request, res: Response, next: NextFunction) => {
     try {
-      const { name, email } = req.body;
+      const parsed = createApplicantSchema.safeParse(req.body);
 
-      if (!name || !email) {
+      if (!parsed.success) {
         return res.status(400).json({
-          error: 'Missing fields: name (string), email (string)',
+          error: 'INVALID_INPUT',
+          details: parsed.error.issues,
         });
       }
+
+      const { name, email } = parsed.data;
 
       const result = await withTransaction(pool, async (ctx) => {
         const query = `

@@ -20,6 +20,7 @@ import { createApplicationRoutes } from './routes/applications';
 import { createJobRoutes } from './routes/jobs';
 import { createApplicantRoutes } from './routes/applicants';
 import { startDecayWorker, stopDecayWorker } from './services/decayWorker';
+import { pool } from './db/pool';
 
 /**
  * Create and configure Express app
@@ -101,23 +102,6 @@ export async function startServer(
   server: any;
   close: () => Promise<void>;
 }> {
-  // Create database pool with hardened timeout settings
-  const pool = new Pool({
-    user: process.env.DB_USER || 'postgres',
-    password: process.env.DB_PASSWORD || 'postgres',
-    host: process.env.DB_HOST || 'localhost',
-    port: parseInt(process.env.DB_PORT || '5432', 10),
-    database: process.env.DB_NAME || 'next_in_line',
-    connectionString: process.env.DATABASE_URL, // Overrides other settings if provided
-    // Connection pool settings
-    max: 20,                           // Max connections
-    min: 2,                            // Min connections
-    idleTimeoutMillis: 30000,          // Close idle connections after 30s
-    connectionTimeoutMillis: 2000,     // Fail fast if no connection available
-    statement_timeout: 5000,           // 5s statement timeout (per requirement)
-    query_timeout: 30000,              // Query timeout (fallback)
-  });
-
   // Test connection
   try {
     const client = await pool.connect();
