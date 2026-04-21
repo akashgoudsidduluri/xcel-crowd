@@ -17,6 +17,15 @@ import { ValidationError, NotFoundError, AppError } from '../errors';
 export function createJobRoutes(pool: Pool): Router {
   const router = Router();
 
+  const parseCount = (value: unknown): number => parseInt(String(value ?? 0), 10);
+
+  const buildPipelineSummary = (stats: Record<string, unknown>) => ({
+    active: parseCount(stats.active),
+    waitlisted: parseCount(stats.waitlisted),
+    hired: parseCount(stats.hired),
+    rejected: parseCount(stats.rejected),
+  });
+
   // Zod schema
   const createJobSchema = z.object({
     title: z.string().min(1),
@@ -96,7 +105,7 @@ export function createJobRoutes(pool: Pool): Router {
           );
 
           const stats = statsResult.rows[0];
-          const occupancy = parseInt(stats.active || 0, 10) + parseInt(stats.pending_ack || 0, 10);
+          const occupancy = parseCount(stats.active) + parseCount(stats.pending_ack);
 
           return {
             job,
@@ -105,12 +114,12 @@ export function createJobRoutes(pool: Pool): Router {
               occupancy,
               utilization: job.capacity > 0 ? occupancy / job.capacity : 0,
               isAtCapacity: occupancy >= job.capacity,
-              active: parseInt(stats.active || 0, 10),
-              pending_ack: parseInt(stats.pending_ack || 0, 10),
-              waitlist: parseInt(stats.waitlist || 0, 10),
-              hired: parseInt(stats.hired || 0, 10),
-              rejected: parseInt(stats.rejected || 0, 10),
-              inactive: parseInt(stats.inactive || 0, 10),
+              active: parseCount(stats.active),
+              pending_ack: parseCount(stats.pending_ack),
+              waitlist: parseCount(stats.waitlist),
+              hired: parseCount(stats.hired),
+              rejected: parseCount(stats.rejected),
+              inactive: parseCount(stats.inactive),
             },
           };
         });
@@ -163,12 +172,7 @@ export function createJobRoutes(pool: Pool): Router {
           ]);
 
           const stats = statsResult.rows[0];
-          const summary = {
-            active: parseInt(stats.active || 0, 10),
-            waitlisted: parseInt(stats.waitlisted || 0, 10),
-            hired: parseInt(stats.hired || 0, 10),
-            rejected: parseInt(stats.rejected || 0, 10)
-          };
+          const summary = buildPipelineSummary(stats);
 
           const applicationsResult = await ctx.query(
             `SELECT
@@ -184,7 +188,7 @@ export function createJobRoutes(pool: Pool): Router {
           return {
             job: jobResult.rows[0],
             summary,
-            applicants: applicationsResult.rows,
+            applicants: applicationsResult.rows ?? [],
           };
         });
 
@@ -221,8 +225,6 @@ export function createJobRoutes(pool: Pool): Router {
       } catch (err) {
         return next(err);
       }
-
-      return;
     }
   );
 
@@ -251,14 +253,14 @@ export function createJobRoutes(pool: Pool): Router {
 
             const stats = statsResult.rows[0];
             const occupancy =
-              parseInt(stats.active || 0, 10) +
-              parseInt(stats.pending_ack || 0, 10);
+              parseCount(stats.active) +
+              parseCount(stats.pending_ack);
 
             return {
               ...job,
-              active_count: parseInt(stats.active || 0, 10), // Ensure this matches frontend expectation
-              pending_ack: parseInt(stats.pending_ack || 0, 10),
-              waitlist: parseInt(stats.waitlist || 0, 10),
+              active_count: parseCount(stats.active),
+              pending_ack: parseCount(stats.pending_ack),
+              waitlist: parseCount(stats.waitlist),
               occupancy,
               utilization: job.capacity > 0 ? occupancy / job.capacity : 0,
               isAtCapacity: occupancy >= job.capacity,

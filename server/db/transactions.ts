@@ -125,7 +125,7 @@ export async function getNextWaitlistedForPromotion(
     `SELECT id, applicant_id, queue_position, penalty_count
      FROM applications
      WHERE job_id = $1 AND status = 'WAITLISTED'
-     ORDER BY queue_position ASC
+     ORDER BY queue_position ASC, created_at ASC, id ASC
      LIMIT 1
      FOR UPDATE SKIP LOCKED`,
     [jobId]
@@ -202,7 +202,9 @@ export async function reindexQueuePositions(
   await ctx.query(
     `WITH ranked AS (
        SELECT id,
-              ROW_NUMBER() OVER (ORDER BY queue_position ASC) AS rn
+              ROW_NUMBER() OVER (
+                ORDER BY queue_position ASC NULLS LAST, created_at ASC, id ASC
+              ) AS rn
        FROM applications
        WHERE job_id = $1 AND status = 'WAITLISTED'
      )
@@ -226,7 +228,7 @@ export async function getQueueState(
     `SELECT id, applicant_id, queue_position, penalty_count, created_at
      FROM applications
      WHERE job_id = $1 AND status = 'WAITLISTED'
-     ORDER BY queue_position ASC`,
+     ORDER BY queue_position ASC, created_at ASC, id ASC`,
     [jobId]
   );
   

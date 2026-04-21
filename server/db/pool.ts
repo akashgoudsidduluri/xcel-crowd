@@ -23,13 +23,16 @@ export const pool = new Pool({
  * Run database migrations
  */
 export async function runMigrations(): Promise<void> {
-  // Migration logic would go here
-  // For now, just ensure tables exist
   await pool.query(`
+    CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
     CREATE TABLE IF NOT EXISTS jobs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       title TEXT NOT NULL,
       capacity INTEGER NOT NULL CHECK (capacity > 0),
+      active_count INTEGER NOT NULL DEFAULT 0 CHECK (active_count >= 0),
+      ack_timeout_seconds INTEGER NOT NULL DEFAULT 30 CHECK (ack_timeout_seconds > 0),
+      created_by TEXT,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );
 
@@ -40,23 +43,40 @@ export async function runMigrations(): Promise<void> {
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );
 
+    DO $$
+    BEGIN
+      IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'application_status') THEN
+        CREATE TYPE application_status AS ENUM (
+          'WAITLISTED',
+          'PENDING_ACK',
+          'ACTIVE',
+          'INACTIVE',
+          'HIRED',
+          'REJECTED'
+        );
+      END IF;
+    END $$;
+
     CREATE TABLE IF NOT EXISTS applications (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
       job_id UUID NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
       applicant_id UUID NOT NULL REFERENCES applicants(id) ON DELETE CASCADE,
-      status TEXT NOT NULL DEFAULT 'PENDING',
+      status application_status NOT NULL DEFAULT 'WAITLISTED',
       queue_position INTEGER,
-      applied_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
-      acknowledged_at TIMESTAMP WITH TIME ZONE,
+      ack_deadline TIMESTAMP WITH TIME ZONE,
+      penalty_count INTEGER NOT NULL DEFAULT 0 CHECK (penalty_count >= 0),
+      last_transition_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+      created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+      updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
       UNIQUE(job_id, applicant_id)
     );
 
     CREATE TABLE IF NOT EXISTS audit_logs (
       id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-      application_id UUID REFERENCES applications(id) ON DELETE CASCADE,
+      application_id UUID NOT NULL REFERENCES applications(id) ON DELETE CASCADE,
       from_status TEXT,
-      to_status TEXT,
-      metadata JSONB,
+      to_status TEXT NOT NULL,
+      metadata JSONB DEFAULT '{}'::jsonb,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );
   `);

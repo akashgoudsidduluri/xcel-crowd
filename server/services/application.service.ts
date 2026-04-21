@@ -217,7 +217,7 @@ export async function withdrawApplication(
   applicationId: string;
   status: ApplicationStatus;
   message: string;
-  cascadePromoted?: number | string;
+  cascadePromoted?: number;
 }> {
   // STEP 1: Withdraw inside transaction
   const result = await withTransaction(pool, async (ctx) => {

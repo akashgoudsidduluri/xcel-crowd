@@ -42,10 +42,11 @@ CREATE TABLE IF NOT EXISTS applications (
   applicant_id UUID NOT NULL REFERENCES applicants(id) ON DELETE CASCADE,
   status application_status NOT NULL DEFAULT 'WAITLISTED',
   queue_position INT,
-  ack_deadline TIMESTAMP,
+  ack_deadline TIMESTAMP WITH TIME ZONE,
   penalty_count INT NOT NULL DEFAULT 0 CHECK (penalty_count >= 0),
-  last_transition_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  last_transition_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT valid_queue_position CHECK (queue_position IS NULL OR queue_position > 0),
   CONSTRAINT unique_application_per_job UNIQUE(job_id, applicant_id)
 );

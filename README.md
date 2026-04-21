@@ -50,7 +50,7 @@ stateDiagram-v2
 **Request Body:**
 ```json
 {
-  "job_id": "uuid",
+  "job_id": "8f8e8e8e-8e8e-8e8e-8e8e-8f8e8f8e8f8e",
   "email": "user@example.com",
   "name": "John Doe"
 }

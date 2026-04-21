@@ -20,7 +20,7 @@
  * 11. Load test (100+ concurrent)
  */
 
-import { describe, test, expect, jest, beforeAll, afterAll } from '@jest/globals';
+import { describe, test, expect, jest, beforeEach, afterAll } from '@jest/globals';
 import { Pool } from 'pg';
 
 // Use real PostgreSQL database for testing
@@ -32,11 +32,12 @@ const pool = new Pool({
   database: process.env.DB_TEST_DATABASE || 'xcelcrowd_test',
 });
 
-beforeAll(async () => {
+beforeEach(async () => {
   // Setup test database
   try {
     const client = await pool.connect();
-    await client.query('BEGIN');
+    // Ensure a pristine state by truncating all related tables
+    await client.query('TRUNCATE jobs, applicants, applications, audit_logs RESTART IDENTITY CASCADE');
     client.release();
   } catch (err) {
     console.error('Failed to connect to test database:', err);
@@ -58,6 +59,7 @@ import { promoteNext, cascadePromotion, getQueueStats } from '../services/promot
 import { withTransaction, getQueueState } from '../db/transactions';
 import { getAuditTrail } from '../services/auditLog.service';
 import { startDecayWorker, stopDecayWorker } from '../services/decayWorker';
+import { ERROR_CODES } from '../errors';
 
 describe('Stress Tests', () => {
 
@@ -109,7 +111,10 @@ test('Duplicate application', async () => {
   const app1 = await applyToJob(pool, 'duplicate@test.com', 'Duplicate User', jobId);
 
   // Try to apply again (same job + email)
-  await expect(applyToJob(pool, 'duplicate@test.com', 'Duplicate User', jobId)).rejects.toThrow('DUPLICATE_APPLICATION');
+  await expect(applyToJob(pool, 'duplicate@test.com', 'Duplicate User', jobId)).rejects.toMatchObject({
+    code: ERROR_CODES.DUPLICATE_APPLICATION,
+    message: 'User already applied to this job',
+  });
 });
 
 // ============================================================================
@@ -189,15 +194,17 @@ test('Decay mechanism', async () => {
     return result.rows[0].id;
   });
 
-  // Apply 3 users
+  // Apply 4 users
   const app1 = await applyToJob(pool, 'decay1@test.com', 'Decay 1', jobId);
   const app2 = await applyToJob(pool, 'decay2@test.com', 'Decay 2', jobId);
   const app3 = await applyToJob(pool, 'decay3@test.com', 'Decay 3', jobId);
+  const app4 = await applyToJob(pool, 'decay4@test.com', 'Decay 4', jobId);
 
-  // First two should be PENDING_ACK, third WAITLISTED
+  // First two should be PENDING_ACK, remaining applicants WAITLISTED
   expect(app1.status).toBe('PENDING_ACK');
   expect(app2.status).toBe('PENDING_ACK');
   expect(app3.status).toBe('WAITLISTED');
+  expect(app4.status).toBe('WAITLISTED');
 
   // Manually set ack_deadline to past for app1 (simulate expiry)
   await withTransaction(pool, async (ctx) => {
@@ -212,13 +219,15 @@ test('Decay mechanism', async () => {
 
   // Check app1 status
   const app1Check = await withTransaction(pool, async (ctx) => {
-    const result = await ctx.query('SELECT status, penalty_count FROM applications WHERE id = $1', [
+    const result = await ctx.query('SELECT status, penalty_count, queue_position FROM applications WHERE id = $1', [
       app1.applicationId,
     ]);
     return result.rows[0];
   });
 
   expect(app1Check.status).toBe('WAITLISTED');
+  expect(app1Check.penalty_count).toBe(1);
+  expect(app1Check.queue_position).toBe(2);
 
   // Check if app3 was promoted to PENDING_ACK
   const app3Check = await withTransaction(pool, async (ctx) => {
@@ -228,7 +237,79 @@ test('Decay mechanism', async () => {
 
   expect(app3Check.status).toBe('PENDING_ACK');
 
+  // ASSERTIONS (TEST 3: Decay + Promotion Chain)
+  const stats = await getQueueStats(pool, jobId);
+  const finalQueue = await pool.query(
+    "SELECT id, queue_position FROM applications WHERE job_id = $1 AND status = 'WAITLISTED' ORDER BY queue_position",
+    [jobId]
+  );
+  
+  expect(app1Check.status).toBe('WAITLISTED');
+  expect(finalQueue.rows[finalQueue.rows.length - 1].id).toBe(app1.applicationId); // True Tail
+  expect(stats.pendingAck).toBe(1); // Next user promoted
+  expect(finalQueue.rows.map(r => r.queue_position)).toEqual([1, 2]); // Contiguous
+
   stopDecayWorker();
+});
+
+// ============================================================================
+// TEST 4: QUEUE GAP DETECTION
+// ============================================================================
+
+test('Queue gap self-healing', async () => {
+  const jobId = await withTransaction(pool, async (ctx) => {
+    const result = await ctx.query(
+      'INSERT INTO jobs (title, capacity) VALUES ($1, $2) RETURNING id',
+      ['Gap Test', 1]
+    );
+    return result.rows[0].id;
+  });
+
+  // Apply 5 users (1 active, 4 waitlisted)
+  const apps = await Promise.all(Array.from({ length: 5 }, (_, i) => 
+    applyToJob(pool, `gap${i}@test.com`, `User ${i}`, jobId)
+  ));
+
+  // 🔥 FORCE A GAP: Manually delete position 2 from the DB bypassing service
+  const waitlisted = apps.filter(a => a.status === 'WAITLISTED');
+  await pool.query('DELETE FROM applications WHERE id = $1', [waitlisted[1].applicationId]);
+
+  // Check gap exists
+  let positions = (await pool.query("SELECT queue_position FROM applications WHERE job_id = $1 AND status = 'WAITLISTED' ORDER BY queue_position", [jobId])).rows.map(r => r.queue_position);
+  expect(positions).toEqual([1, 3, 4]); // The gap is real
+
+  // Trigger a system action (Withdrawal of position 1)
+  await withdrawApplication(pool, waitlisted[0].applicationId);
+
+  // ASSERTIONS
+  positions = (await pool.query("SELECT queue_position FROM applications WHERE job_id = $1 AND status = 'WAITLISTED' ORDER BY queue_position", [jobId])).rows.map(r => r.queue_position);
+  expect(positions).toEqual([1, 2]); // Healed to [1, 2]
+  expect(positions.length).toBe(2);
+  const stats = await getQueueStats(pool, jobId);
+  expect(stats.waitlist).toBe(2);
+});
+
+// ============================================================================
+// TEST 10: API CONSISTENCY TEST
+// ============================================================================
+
+test('API Metrics Consistency', async () => {
+  const jobId = await withTransaction(pool, async (ctx) => {
+    const result = await ctx.query('INSERT INTO jobs (title, capacity) VALUES ($1, 5) RETURNING id', ['Metric Test']);
+    return result.rows[0].id;
+  });
+
+  await applyToJob(pool, 'metric@test.com', 'User', jobId);
+  
+  const { getJobMetrics } = require('../services/metrics.service');
+  const metrics = await withTransaction(pool, async (ctx) => getJobMetrics(ctx, jobId));
+
+  // ASSERTIONS
+  expect(metrics.jobId).toBe(jobId);
+  expect(metrics.occupancy).toBe(metrics.active + (metrics.pendingAck || 0));
+  expect(metrics.utilization).toBeLessThanOrEqual(1);
+  expect(typeof metrics.turnoverCount).toBe('number');
+  expect(metrics.timestamp).toBeDefined();
 });
 
 // ============================================================================
@@ -254,15 +335,21 @@ test('Cascade promotion', async () => {
 
   // First 2 should be PENDING_ACK, last 2 WAITLISTED
   const statsBefore = await getQueueStats(pool, jobId);
+  const pendingAckApps = apps.filter((app) => app.status === 'PENDING_ACK');
+  const waitlistedApps = apps.filter((app) => app.status === 'WAITLISTED');
 
-  // Acknowledge first 2
-  await acknowledgeApplication(pool, apps[0].applicationId);
-  await acknowledgeApplication(pool, apps[1].applicationId);
+  expect(pendingAckApps).toHaveLength(2);
+  expect(waitlistedApps).toHaveLength(2);
+
+  // Acknowledge the applicants that actually acquired the slots.
+  await acknowledgeApplication(pool, pendingAckApps[0].applicationId);
+  await acknowledgeApplication(pool, pendingAckApps[1].applicationId);
 
   // Exit (REJECT) first user - should open slot
-  await exitApplication(pool, apps[0].applicationId, 'REJECTED');
+  await exitApplication(pool, pendingAckApps[0].applicationId, 'REJECTED');
 
-  // Trigger cascade
+  // Trigger cascade again; it should be a no-op because exitApplication
+  // already filled the vacancy atomically.
   const cascade = await withTransaction(pool, async (ctx) => {
     return await cascadePromotion(ctx, jobId);
   });
@@ -271,14 +358,17 @@ test('Cascade promotion', async () => {
   const statsAfter = await getQueueStats(pool, jobId);
   const occupancyBefore = statsBefore.active + statsBefore.pendingAck;
   const occupancyAfter = statsAfter.active + statsAfter.pendingAck;
+  const queueAfter = await withTransaction(pool, async (ctx) => getQueueState(ctx, jobId));
 
-  expect(cascade.totalPromoted).toBeGreaterThanOrEqual(1);
+  expect(cascade.totalPromoted).toBe(0);
+  expect(cascade.promoted).toEqual([]);
 
   // Check occupancy still valid
   expect(occupancyAfter).toBeLessThanOrEqual(statsAfter.capacity);
 
   // Check waitlist reduced
   expect(statsAfter.waitlist).toBeLessThan(statsBefore.waitlist);
+  expect(queueAfter.map((entry: any) => entry.queue_position)).toEqual([1]);
 });
 
 // ============================================================================
@@ -301,9 +391,12 @@ test('Queue integrity', async () => {
     )
   );
 
-  // Acknowledge first 3
-  for (let i = 0; i < 3; i++) {
-    await acknowledgeApplication(pool, apps[i].applicationId);
+  const pendingAckApps = apps.filter((app) => app.status === 'PENDING_ACK');
+  expect(pendingAckApps).toHaveLength(3);
+
+  // Acknowledge the applicants that actually acquired capacity.
+  for (const app of pendingAckApps) {
+    await acknowledgeApplication(pool, app.applicationId);
   }
 
   // Trigger cascade promotions multiple times
@@ -354,24 +447,28 @@ test('Concurrent promotion', async () => {
     )
   );
 
-  // Acknowledge first 2
-  await acknowledgeApplication(pool, apps[0].applicationId);
-  await acknowledgeApplication(pool, apps[1].applicationId);
+  const pendingAckApps = apps.filter((app) => app.status === 'PENDING_ACK');
+  expect(pendingAckApps).toHaveLength(2);
+
+  // Acknowledge the two applicants that actually acquired the available slots.
+  await acknowledgeApplication(pool, pendingAckApps[0].applicationId);
+  await acknowledgeApplication(pool, pendingAckApps[1].applicationId);
 
   // Exit first user
-  await exitApplication(pool, apps[0].applicationId, 'REJECTED');
+  await exitApplication(pool, pendingAckApps[0].applicationId, 'REJECTED');
 
-  // Fire multiple promotion requests concurrently
+  // Fire multiple promotion requests concurrently after the slot has already
+  // been filled by exitApplication's atomic promotion step.
   const promotions = await Promise.all([
     withTransaction(pool, async (ctx) => promoteNext(ctx, jobId)),
     withTransaction(pool, async (ctx) => promoteNext(ctx, jobId)),
     withTransaction(pool, async (ctx) => promoteNext(ctx, jobId)),
   ]);
 
-  // Only one should succeed, others should return null
+  // No additional promotion should succeed because occupancy is already full.
   const promotedCount = promotions.filter((p) => p !== null).length;
 
-  expect(promotedCount).toBe(1);
+  expect(promotedCount).toBe(0);
 
   // Verify same applicant not promoted multiple times
   const promotedIds = promotions.filter((p) => p !== null).map((p) => p!.applicationId);
@@ -400,29 +497,36 @@ test('Withdrawal flow', async () => {
     applyToJob(pool, 'withdraw3@test.com', 'Withdraw 3', jobId),
   ]);
 
-  // Acknowledge first 2
-  await acknowledgeApplication(pool, apps[0].applicationId);
-  await acknowledgeApplication(pool, apps[1].applicationId);
+  const pendingAckApps = apps.filter((app) => app.status === 'PENDING_ACK');
+  const waitlistedApp = apps.find((app) => app.status === 'WAITLISTED');
+
+  expect(pendingAckApps).toHaveLength(2);
+  expect(waitlistedApp).toBeDefined();
+
+  await acknowledgeApplication(pool, pendingAckApps[0].applicationId);
+  await acknowledgeApplication(pool, pendingAckApps[1].applicationId);
 
   const statsBefore = await getQueueStats(pool, jobId);
   const occupancyBefore = statsBefore.active + statsBefore.pendingAck;
 
   // Withdraw from ACTIVE
-  await withdrawApplication(pool, apps[0].applicationId);
+  await withdrawApplication(pool, pendingAckApps[0].applicationId);
 
   const statsAfter = await getQueueStats(pool, jobId);
   const occupancyAfter = statsAfter.active + statsAfter.pendingAck;
 
   // Verify slot was freed and cascade triggered
-  expect(occupancyAfter).toBeLessThan(occupancyBefore);
+  expect(occupancyAfter).toBe(occupancyBefore);
+  expect(occupancyAfter).toBeLessThanOrEqual(statsAfter.capacity);
 
   // Check if waitlist was promoted
   const app3Check = await withTransaction(pool, async (ctx) => {
-    const result = await ctx.query('SELECT status FROM applications WHERE id = $1', [apps[2].applicationId]);
+    const result = await ctx.query('SELECT status FROM applications WHERE id = $1', [waitlistedApp!.applicationId]);
     return result.rows[0].status;
   });
 
   expect(app3Check).toBe('PENDING_ACK');
+  expect(statsAfter.waitlist).toBe(0);
 });
 
 // ============================================================================

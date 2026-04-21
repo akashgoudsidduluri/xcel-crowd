@@ -175,6 +175,8 @@ export async function cascadePromotion(
     applicantId: row.applicant_id,
   }));
 
+  await reindexQueuePositions(ctx, jobId);
+
   // STEP 4: Log transitions for each promoted application
   for (const app of promoted) {
     await logTransition(ctx, app.applicationId, 'WAITLISTED', 'PENDING_ACK', {

@@ -22,6 +22,13 @@ import {
   StateTransitionError
 } from '../errors';
 
+const PG_ERROR_CODES = {
+  UNIQUE_VIOLATION: '23505',
+  FOREIGN_KEY_VIOLATION: '23503',
+  CHECK_VIOLATION: '23514',
+  NOT_NULL_VIOLATION: '23502',
+};
+
 export function errorHandler(
   err: Error,
   req: Request,
@@ -97,7 +104,7 @@ export function errorHandler(
     const pgError = err as any;
 
     // Unique constraint violation
-    if (pgError.code === '23505') {
+    if (pgError.code === PG_ERROR_CODES.UNIQUE_VIOLATION) {
       res.status(409).json({
         error: 'DUPLICATE_ENTRY',
         message: 'Resource already exists',
@@ -106,7 +113,7 @@ export function errorHandler(
     }
 
     // Foreign key constraint violation
-    if (pgError.code === '23503') {
+    if (pgError.code === PG_ERROR_CODES.FOREIGN_KEY_VIOLATION) {
       res.status(400).json({
         error: 'INVALID_REFERENCE',
         message: 'Referenced resource does not exist',
@@ -115,7 +122,7 @@ export function errorHandler(
     }
 
     // Check constraint violation
-    if (pgError.code === '23514') {
+    if (pgError.code === PG_ERROR_CODES.CHECK_VIOLATION) {
       res.status(400).json({
         error: 'CONSTRAINT_VIOLATION',
         message: 'Data violates business rules',

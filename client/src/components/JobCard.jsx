@@ -17,6 +17,13 @@ export default function JobCard({ job, currentUserEmail, onUpdate }) {
 
   if (!job) return null;
 
+  const summary = pipeline?.summary ?? {
+    active: 0,
+    waitlisted: 0,
+    hired: 0,
+    rejected: 0,
+  };
+
   // Determine if current user created this job
   const isJobCreator = job.created_by && currentUserEmail && job.created_by === currentUserEmail;
 
@@ -91,27 +98,27 @@ export default function JobCard({ job, currentUserEmail, onUpdate }) {
         <div className="pipeline-content">
           <div className="stats">
             <div className="stat">
-              <span className="stat-value">{pipeline.summary?.active ?? 0}</span> {/* Use optional chaining */}
+              <span className="stat-value">{summary.active}</span>
               <span className="stat-label">Active</span>
             </div>
             <div className="stat">
-              <span className="stat-value">{pipeline.summary?.waitlisted ?? 0}</span> {/* Use optional chaining */}
+              <span className="stat-value">{summary.waitlisted}</span>
               <span className="stat-label">Waitlisted</span>
             </div>
             <div className="stat">
-              <span className="stat-value">{pipeline.summary?.hired ?? 0}</span> {/* Use optional chaining */}
+              <span className="stat-value">{summary.hired}</span>
               <span className="stat-label">Hired</span>
             </div>
             <div className="stat">
-              <span className="stat-value">{pipeline.summary?.rejected ?? 0}</span> {/* Use optional chaining */}
+              <span className="stat-value">{summary.rejected}</span>
               <span className="stat-label">Rejected</span>
             </div>
           </div>
 
-          {pipeline.applicants?.length > 0 && ( /* Use optional chaining */
+          {pipeline.applicants?.length > 0 && (
             <div className="applicants-list">
               <h4>Recent Applicants</h4>
-              {pipeline.applicants?.slice(0, 5).map((app) => ( /* Use optional chaining */
+              {pipeline.applicants.slice(0, 5).map((app) => (
                 <div key={app.id} className="applicant-item">
                   <div className="app-status" style={{
                     backgroundColor: getStatusColor(app.status),

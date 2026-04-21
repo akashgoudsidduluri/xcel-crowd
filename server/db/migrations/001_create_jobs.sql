@@ -4,6 +4,7 @@ CREATE TABLE IF NOT EXISTS jobs (
   title TEXT NOT NULL,
   capacity INT NOT NULL CHECK (capacity > 0),
   active_count INT NOT NULL DEFAULT 0 CHECK (active_count >= 0),
+  ack_timeout_seconds INT NOT NULL DEFAULT 30 CHECK (ack_timeout_seconds > 0),
   created_by TEXT,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );

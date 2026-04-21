@@ -1,6 +1,4 @@
 const request = require('supertest');
-const { pool } = require('../db/pool');
-const { createApp } = require('../index');
 
 // Mock the database pool BEFORE importing createApp
 jest.mock('../db/pool', () => {
@@ -22,6 +20,9 @@ jest.mock('../services/decayWorker', () => ({
   stopDecayWorker: jest.fn(),
 }));
 
+const { pool } = require('../db/pool');
+const { createApp } = require('../index');
+
 const app = createApp(pool);
 
 describe('API Route Validations (Zod Integration)', () => {
@@ -40,36 +41,34 @@ describe('API Route Validations (Zod Integration)', () => {
       expect(res.body.error).toBe('VALIDATION_ERROR');
       
       // Should flag both missing capacity and empty title
+      expect(res.body.details).toEqual(expect.any(Array));
       expect(res.body.details).toEqual(
         expect.arrayContaining([
-          expect.objectContaining({ path: 'title', message: 'Title is required' }),
-          expect.objectContaining({ path: 'capacity' })
+          expect.objectContaining({ path: ['title'] }),
+          expect.objectContaining({ path: ['capacity'] }),
         ])
       );
     });
 
     it('should pass validation and call DB if valid payload', async () => {
-      // Setup mock DB response for successful job creation
-      if (pool.query && typeof pool.query.mockResolvedValueOnce === 'function') {
-        pool.query.mockResolvedValueOnce({ 
-          rows: [{ id: '123', title: 'Engineer', capacity: 3, active_count: 0 }] 
-        });
-      } else {
-        // Fallback: set up mock using mockImplementation
-        pool.query = jest.fn().mockResolvedValue({
-          rows: [{ id: '123', title: 'Engineer', capacity: 3, active_count: 0 }]
-        });
-      }
+      const client = {
+        query: jest
+          .fn()
+          .mockResolvedValueOnce({ rows: [] }) // BEGIN
+          .mockResolvedValueOnce({
+            rows: [{ id: '123', title: 'Engineer', capacity: 3, created_by: null, created_at: new Date().toISOString() }],
+          }) // INSERT ... RETURNING
+          .mockResolvedValueOnce({ rows: [] }), // COMMIT
+        release: jest.fn(),
+      };
+      pool.connect.mockResolvedValueOnce(client);
 
       const res = await request(app)
         .post('/jobs')
         .send({ title: 'Engineer', capacity: 3 });
 
-      // Validation should pass, and route should attempt DB operation
-      // In mock environment, this may return 201 or 500 depending on mock setup
-      // The important thing is the request was accepted (not 400 validation error)
-      expect(res.statusCode).toBeGreaterThanOrEqual(200);
-      expect(res.statusCode).toBeLessThan(400);
+      expect(res.statusCode).toBe(201);
+      expect(client.query).toHaveBeenCalled();
     });
   });
 

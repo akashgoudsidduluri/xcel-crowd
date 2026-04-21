@@ -12,7 +12,7 @@
  * 6. Race condition safety
  */
 
-import { describe, test, expect, jest, beforeAll, afterAll } from '@jest/globals';
+import { describe, test, expect, jest, beforeEach, afterAll } from '@jest/globals';
 import { Pool } from 'pg';
 
 // Use real PostgreSQL database for testing
@@ -24,11 +24,12 @@ const pool = new Pool({
   database: process.env.DB_TEST_DATABASE || 'xcelcrowd_test',
 });
 
-beforeAll(async () => {
+beforeEach(async () => {
   // Setup test database
   try {
     const client = await pool.connect();
-    await client.query('BEGIN');
+    // Ensure a pristine state by truncating all related tables
+    await client.query('TRUNCATE jobs, applicants, applications, audit_logs RESTART IDENTITY CASCADE');
     client.release();
   } catch (err) {
     console.error('Failed to connect to test database:', err);
@@ -56,7 +57,6 @@ import { validateTransition } from '../stateMachine';
 // ============================================================================
 
 test('No double-booking on last slot', async () => {
-  // Create job with capacity 1
   const jobId = await withTransaction(pool, async (ctx) => {
     const result = await ctx.query(
       'INSERT INTO jobs (title, capacity) VALUES ($1, $2) RETURNING id',
@@ -65,20 +65,76 @@ test('No double-booking on last slot', async () => {
     return result.rows[0].id;
   });
 
-  // Concurrent applies (simulated sequentially but with same logic)
+  // 🔥 AGGRESSIVE: 20 concurrent applies for 1 slot
   const applies = await Promise.all([
-    applyToJob(pool, 'user1@test.com', 'User 1', jobId),
-    applyToJob(pool, 'user2@test.com', 'User 2', jobId),
-    applyToJob(pool, 'user3@test.com', 'User 3', jobId),
+    ...Array.from({ length: 20 }, (_, i) => 
+      applyToJob(pool, `race${i}@test.com`, `User ${i}`, jobId)
+    )
   ]);
 
-  // Verify: exactly 1 PENDING_ACK, 2 WAITLISTED
   const stats = await getQueueStats(pool, jobId);
+  const queue = await withTransaction(pool, async (ctx) => {
+    const result = await ctx.query(
+      "SELECT queue_position FROM applications WHERE job_id = $1 AND status = 'WAITLISTED' ORDER BY queue_position",
+      [jobId]
+    );
+    return result.rows.map(r => r.queue_position);
+  });
 
+  // ASSERTIONS
   expect(stats.pendingAck).toBe(1);
-  expect(stats.waitlist).toBe(2);
-  expect(stats.active).toBe(1);
+  expect(stats.waitlist).toBe(19);
+  expect(stats.active + stats.pendingAck).toBeLessThanOrEqual(stats.capacity);
+  expect(queue[0]).toBe(1);
+  expect(queue[18]).toBe(19);
+  expect(queue.every((p, i) => p === i + 1)).toBe(true);
 });
+
+// ============================================================================
+// TEST 5: Multi-worker decay race
+// ============================================================================
+
+test('Multi-worker decay race safety', async () => {
+  const jobId = await withTransaction(pool, async (ctx) => {
+    const result = await ctx.query(
+      'INSERT INTO jobs (title, capacity) VALUES ($1, $2) RETURNING id',
+      ['Multi-Worker Decay', 5]
+    );
+    return result.rows[0].id;
+  });
+
+  // Setup 5 expired applications
+  await Promise.all(Array.from({ length: 5 }, (_, i) => 
+    applyToJob(pool, `decay_race${i}@test.com`, `User ${i}`, jobId)
+  ));
+  
+  await pool.query(
+    "UPDATE applications SET ack_deadline = NOW() - INTERVAL '1 hour' WHERE job_id = $1",
+    [jobId]
+  );
+
+  // 🔥 AGGRESSIVE: Simulate two decay workers firing at the exact same time
+  // This tests FOR UPDATE SKIP LOCKED
+  const { processDecayedApplications } = require('../services/decayWorker');
+  await Promise.all([
+    processDecayedApplications(pool),
+    processDecayedApplications(pool)
+  ]);
+
+  const stats = await getQueueStats(pool, jobId);
+  const auditCounts = await pool.query(
+    "SELECT COUNT(*) FROM audit_logs l JOIN applications a ON l.application_id = a.id WHERE a.job_id = $1 AND l.to_status = 'WAITLISTED'",
+    [jobId]
+  );
+
+  // ASSERTIONS
+  expect(stats.pendingAck).toBe(0);
+  expect(stats.waitlist).toBe(5);
+  expect(parseInt(auditCounts.rows[0].count)).toBe(5); // No double transitions logged
+  const queue = await pool.query("SELECT queue_position FROM applications WHERE job_id = $1 ORDER BY queue_position", [jobId]);
+  expect(queue.rows.map(r => r.queue_position)).toEqual([1, 2, 3, 4, 5]);
+});
+
 
 // ============================================================================
 // TEST 2: Queue positions always contiguous
@@ -113,6 +169,8 @@ test('Queue positions always contiguous', async () => {
 
   // Verify contiguous
   expect(queue).toEqual([1, 2]);
+  expect(queue.length).toBe(2);
+  expect(queue.every((position, index) => position === index + 1)).toBe(true);
 });
 
 // ============================================================================
@@ -137,24 +195,45 @@ test('Cascade promotion fills slots', async () => {
     applyToJob(pool, 'user4@test.com', 'User 4', jobId),
   ]);
 
-  // Acknowledge first 2 to move to ACTIVE
-  await acknowledgeApplication(pool, apps[0].applicationId);
-  await acknowledgeApplication(pool, apps[1].applicationId);
+  const pendingAckApps = apps.filter((app) => app.status === 'PENDING_ACK');
+  expect(pendingAckApps).toHaveLength(2);
+
+  // Acknowledge the applicants that actually acquired the available slots.
+  await acknowledgeApplication(pool, pendingAckApps[0].applicationId);
+  await acknowledgeApplication(pool, pendingAckApps[1].applicationId);
 
   // Remove one ACTIVE
-  await exitApplication(pool, apps[0].applicationId, 'REJECTED');
+  await exitApplication(pool, pendingAckApps[0].applicationId, 'REJECTED');
 
-  // Trigger cascade
+  // Trigger cascade again; it should be a no-op because exitApplication
+  // already filled the freed slot atomically.
   const cascadeResult = await withTransaction(pool, async (ctx) => {
     return await cascadePromotion(ctx, jobId);
   });
 
   // Get stats after
   const statsAfter = await getQueueStats(pool, jobId);
+  const queueAfter = await withTransaction(pool, async (ctx) => {
+    const result = await ctx.query(
+      `SELECT applicant_id, queue_position
+       FROM applications
+       WHERE job_id = $1 AND status = 'WAITLISTED'
+       ORDER BY queue_position ASC`,
+      [jobId]
+    );
+    return result.rows;
+  });
 
-  expect(cascadeResult.totalPromoted).toBe(1);
-  expect(statsAfter.active).toBe(2);
+  expect(cascadeResult.totalPromoted).toBe(0);
+  expect(cascadeResult.promoted).toEqual([]);
+  expect(statsAfter.active + statsAfter.pendingAck).toBeLessThanOrEqual(statsAfter.capacity);
   expect(statsAfter.waitlist).toBe(1);
+  expect(queueAfter).toEqual([
+    expect.objectContaining({
+      applicant_id: expect.any(String),
+      queue_position: 1,
+    }),
+  ]);
 });
 
 // ============================================================================

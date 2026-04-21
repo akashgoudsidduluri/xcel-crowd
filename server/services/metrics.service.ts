@@ -20,7 +20,7 @@ export interface JobMetrics {
   waitlistSize: number;
   
   // Historical / Turnover metrics
-  turnoverRate: number; // Hired + Rejected / Total applications
+  turnoverCount: number; // Total HIRED + REJECTED
   decayFrequency: number; // Number of expirations
   avgWaitTimeSeconds: string;
   
@@ -70,7 +70,10 @@ export async function getJobMetrics(
   const activeCount = parseInt(stats.active || 0, 10);
   const pendingAckCount = parseInt(stats.pending_ack || 0, 10);
   const waitlistSize = parseInt(stats.waitlist || 0, 10);
-  const outcomesCount = parseInt(stats.hired || 0, 10) + parseInt(stats.rejected || 0, 10);
+  const hiredCount = parseInt(stats.hired || 0, 10);
+  const rejectedCount = parseInt(stats.rejected || 0, 10);
+  const outcomesCount = hiredCount + rejectedCount;
+  const totalApplications = activeCount + pendingAckCount + waitlistSize + outcomesCount;
   
   const occupancy = activeCount + pendingAckCount;
   
@@ -102,7 +105,7 @@ export async function getJobMetrics(
     capacity,
     utilization: capacity > 0 ? occupancy / capacity : 0,
     waitlistSize,
-    turnoverRate: outcomesCount, // Simple count for now, could be relative to active slots
+    turnoverCount: outcomesCount,
     decayFrequency: parseInt(auditResult.rows[0].decay_count || 0, 10),
     avgWaitTimeSeconds: parseFloat(waitTimeResult.rows[0].avg_wait || 0).toFixed(2),
     isAtCapacity: occupancy >= capacity,
