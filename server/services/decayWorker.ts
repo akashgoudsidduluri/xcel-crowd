@@ -1,17 +1,8 @@
 /**
- * ============================================================================
  * DECAY WORKER (BACKGROUND PROCESS)
- * ============================================================================
  * 
- * Runs every 5-10 seconds to detect and process expired PENDING_ACK applications
- * 
- * CRITICAL LOGIC:
- * 1. Find PENDING_ACK where ack_deadline < NOW()
- * 2. Transition PENDING_ACK → WAITLISTED
- * 3. Increment penalty_count
- * 4. Reinsert expired applicants at the queue tail in deterministic order
- * 5. Trigger cascade promotion
- * 6. Log all transitions
+ * Detects and processes expired PENDING_ACK applications every 5-10 seconds.
+ * Ensures applicants don't stay in limbo state indefinitely.
  */
 
 import { Pool } from 'pg';
@@ -113,6 +104,9 @@ export function startDecayWorker(
         batchSize: 0,
         jobIds: [],
       });
+      // Re-thrown errors from processDecayedApplications propagate here
+      // Log and let it bubble so monitoring/alerting systems catch it
+      console.error('[DECAY WORKER] Process failed:', err.message);
     });
   }, intervalMs);
 }
@@ -235,6 +229,7 @@ async function processDecayedApplications(pool: Pool): Promise<void> {
     });
   } catch (err) {
     logDecayWorkerError(err, errorContext);
+    throw err; // Propagate error for visibility and monitoring
   } finally {
     isRunning = false;
   }

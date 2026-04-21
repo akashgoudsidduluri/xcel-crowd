@@ -2,11 +2,9 @@ import { TransactionContext } from '../db/transactions';
 import { AppError } from '../errors';
 
 /**
- * ============================================================================
  * METRICS SERVICE
- * ============================================================================
  * 
- * Provides structured business intelligence and observation data for jobs.
+ * Provides structured business intelligence and system health observations.
  */
 
 export interface JobMetrics {
@@ -105,6 +103,18 @@ export async function getJobMetrics(
     [jobId]
   );
 
+  // 5. Check for recent promotion activity (last 60 seconds)
+  const recentPromotionsResult = await ctx.query(
+    `SELECT COUNT(*) as promotion_count
+     FROM audit_logs
+     WHERE job_id = $1
+       AND from_status = 'WAITLISTED'
+       AND to_status = 'PENDING_ACK'
+       AND created_at > NOW() - INTERVAL '60 seconds'`,
+    [jobId]
+  );
+  const recentPromotions = parseInt(recentPromotionsResult.rows[0].promotion_count || 0, 10);
+
   return {
     jobId,
     timestamp: new Date().toISOString(),
@@ -124,6 +134,5 @@ export async function getJobMetrics(
     decayRate: totalApplications > 0 ? Math.round((parseInt(auditResult.rows[0].decay_count || 0, 10) / totalApplications) * 100) / 100 : 0,
 
     isAtCapacity: occupancy >= capacity,
-    isStalled: waitlistSize > 0 && occupancy < capacity // Warning: available slots but waitlist exists
+    isStalled: waitlistSize > 0 && occupancy < capacity && recentPromotions === 0
   };
-}

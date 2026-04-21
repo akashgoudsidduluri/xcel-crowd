@@ -198,7 +198,7 @@ export async function cascadePromotion(
 }
 
 /**
- * Get queue statistics for a job
+ * Get queue statistics for a job (read-only, no transaction needed)
  */
 export async function getQueueStats(
   pool: Pool,
@@ -211,46 +211,44 @@ export async function getQueueStats(
   utilization: number;
   isAtCapacity: boolean;
 }> {
-  return await withTransaction(pool, async (ctx) => {
-    const jobResult = await ctx.query(
-      'SELECT capacity FROM jobs WHERE id = $1',
-      [jobId]
+  const jobResult = await pool.query(
+    'SELECT capacity FROM jobs WHERE id = $1',
+    [jobId]
+  );
+
+  if (jobResult.rows.length === 0) {
+    throw new AppError(
+      `Job not found: ${jobId}`,
+      404,
+      'JOB_NOT_FOUND'
     );
+  }
 
-    if (jobResult.rows.length === 0) {
-      throw new AppError(
-        `Job not found: ${jobId}`,
-        404,
-        'JOB_NOT_FOUND'
-      );
-    }
+  const capacity = jobResult.rows[0].capacity;
 
-    const capacity = jobResult.rows[0].capacity;
+  const statsResult = await pool.query(
+    `SELECT
+      SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) as active,
+      SUM(CASE WHEN status = 'PENDING_ACK' THEN 1 ELSE 0 END) as pending_ack,
+      SUM(CASE WHEN status = 'WAITLISTED' THEN 1 ELSE 0 END) as waitlist
+     FROM applications
+     WHERE job_id = $1`,
+    [jobId]
+  );
 
-    const statsResult = await ctx.query(
-      `SELECT
-        SUM(CASE WHEN status = 'ACTIVE' THEN 1 ELSE 0 END) as active,
-        SUM(CASE WHEN status = 'PENDING_ACK' THEN 1 ELSE 0 END) as pending_ack,
-        SUM(CASE WHEN status = 'WAITLISTED' THEN 1 ELSE 0 END) as waitlist
-       FROM applications
-       WHERE job_id = $1`,
-      [jobId]
-    );
+  const row = statsResult.rows[0];
+  const active = parseInt(row.active || 0, 10);
+  const pendingAck = parseInt(row.pending_ack || 0, 10);
+  const waitlist = parseInt(row.waitlist || 0, 10);
+  const occupancy = active + pendingAck;
+  const utilization = capacity > 0 ? occupancy / capacity : 0;
 
-    const row = statsResult.rows[0];
-    const active = parseInt(row.active || 0, 10);
-    const pendingAck = parseInt(row.pending_ack || 0, 10);
-    const waitlist = parseInt(row.waitlist || 0, 10);
-    const occupancy = active + pendingAck;
-    const utilization = capacity > 0 ? occupancy / capacity : 0;
-
-    return {
-      capacity,
-      active,
-      pendingAck,
-      waitlist,
-      utilization: Math.round(utilization * 100) / 100,
-      isAtCapacity: occupancy >= capacity,
-    };
-  });
+  return {
+    capacity,
+    active,
+    pendingAck,
+    waitlist,
+    utilization: Math.round(utilization * 100) / 100,
+    isAtCapacity: occupancy >= capacity,
+  };
 }

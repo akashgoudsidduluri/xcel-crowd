@@ -46,7 +46,7 @@ import {
   acknowledgeApplication,
   exitApplication,
 } from '../services/application.service';
-import { getQueueStats } from '../services/promotion.service';
+import { getQueueStats, cascadePromotion } from '../services/promotion.service';
 import { withTransaction } from '../db/transactions';
 import { getAuditTrail } from '../services/auditLog.service';
 import { validateTransition } from '../stateMachine';
