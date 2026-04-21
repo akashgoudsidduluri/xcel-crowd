@@ -24,7 +24,7 @@ export interface JobMetrics {
   rejectedCount: number;
   turnoverCount: number; // Total HIRED + REJECTED
   decayFrequency: number; // Number of expirations
-  avgWaitTimeSeconds: string;
+  avgWaitTimeSeconds: number;
   
   // Insight Metrics
   conversionRate: number;   // HIRED / TOTAL
@@ -116,7 +116,7 @@ export async function getJobMetrics(
     rejectedCount,
     turnoverCount: outcomesCount,
     decayFrequency: parseInt(auditResult.rows[0].decay_count || 0, 10),
-    avgWaitTimeSeconds: parseFloat(waitTimeResult.rows[0].avg_wait || 0).toFixed(2),
+    avgWaitTimeSeconds: Number(parseFloat(waitTimeResult.rows[0].avg_wait || 0).toFixed(2)),
     
     // Derived Insights
     conversionRate: totalApplications > 0 ? Math.round((hiredCount / totalApplications) * 100) / 100 : 0,

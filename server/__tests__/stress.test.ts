@@ -20,7 +20,7 @@
  * 11. Load test (100+ concurrent)
  */
 
-import { describe, test, expect, jest, beforeEach, afterAll } from '@jest/globals';
+import { describe, test, expect, beforeEach, afterAll } from '@jest/globals';
 import { Pool } from 'pg';
 
 // Use real PostgreSQL database for testing

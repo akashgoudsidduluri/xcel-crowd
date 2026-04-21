@@ -12,7 +12,7 @@
  * 6. Race condition safety
  */
 
-import { describe, test, expect, jest, beforeEach, afterAll } from '@jest/globals';
+import { test, expect, beforeEach, afterAll } from '@jest/globals';
 import { Pool } from 'pg';
 
 // Use real PostgreSQL database for testing
@@ -44,7 +44,6 @@ afterAll(async () => {
 import {
   applyToJob,
   acknowledgeApplication,
-  withdrawApplication,
   exitApplication,
 } from '../services/application.service';
 import { getQueueStats } from '../services/promotion.service';

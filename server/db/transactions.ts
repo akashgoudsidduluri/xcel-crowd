@@ -12,17 +12,24 @@
 
 import { Pool } from 'pg';
 import { AppError, ERROR_CODES } from '../errors';
-import { TransactionContext } from './types';
+import { TransactionContext, ExpiredPendingAckApplication } from './types';
 import { ApplicationStatus } from '../stateMachine';
 
+import { WaitlistedApplicationRow } from './types';
+
 // Re-export TransactionContext for convenience (also defined in ./types)
-export { TransactionContext } from './types';
+export { TransactionContext, WaitlistedApplicationRow } from './types';
+
+export interface InternalTransactionContext extends TransactionContext {
+  commit: () => Promise<void>;
+  rollback: () => Promise<void>;
+}
 
 /**
  * Start a new transaction
  * All database operations MUST use ctx.query() to ensure they're in transaction
  */
-export async function beginTransaction(pool: Pool): Promise<TransactionContext> {
+export async function beginTransaction(pool: Pool): Promise<InternalTransactionContext> {
   const client = await pool.connect();
   
   try {
@@ -37,7 +44,6 @@ export async function beginTransaction(pool: Pool): Promise<TransactionContext> 
   }
 
   return {
-    client,
     query: (text: string, values?: any[]) => client.query(text, values),
     commit: async () => {
       await client.query('COMMIT');
@@ -120,7 +126,7 @@ export async function getJobForUpdate(
 export async function getNextWaitlistedForPromotion(
   ctx: TransactionContext,
   jobId: string
-): Promise<any | null> {
+): Promise<WaitlistedApplicationRow | null> {
   const result = await ctx.query(
     `SELECT id, applicant_id, queue_position, penalty_count
      FROM applications
@@ -223,7 +229,7 @@ export async function reindexQueuePositions(
 export async function getQueueState(
   ctx: TransactionContext,
   jobId: string
-): Promise<any[]> {
+): Promise<WaitlistedApplicationRow[]> {
   const result = await ctx.query(
     `SELECT id, applicant_id, queue_position, penalty_count, created_at
      FROM applications
@@ -327,7 +333,7 @@ export async function getApplicationForUpdate(
 export async function getExpiredPendingAck(
   ctx: TransactionContext,
   batchSize: number = 100
-): Promise<any[]> {
+): Promise<ExpiredPendingAckApplication[]> {
   const result = await ctx.query(
     `SELECT id, job_id, applicant_id, status, queue_position, penalty_count
      FROM applications

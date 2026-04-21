@@ -27,7 +27,24 @@ const PG_ERROR_CODES = {
   FOREIGN_KEY_VIOLATION: '23503',
   CHECK_VIOLATION: '23514',
   NOT_NULL_VIOLATION: '23502',
-};
+} as const;
+
+interface PostgresError extends Error {
+  code?: string;
+  detail?: string;
+  constraint?: string;
+}
+
+interface ErrorResponse {
+  error: string;
+  message: string;
+  details?: Record<string, any>;
+}
+
+function getErrorCode(err: Error): string {
+  const pgErr = err as PostgresError;
+  return pgErr.code || err.name;
+}
 
 export function errorHandler(
   err: Error,
@@ -36,17 +53,23 @@ export function errorHandler(
   next: NextFunction
 ): void {
   // Log the error for debugging with full context
-  const errorContext = {
-    method: req.method,
-    path: req.path,
-    timestamp: new Date().toISOString(),
-    ...(err instanceof Error && { stack: err.stack }),
-  };
-  console.error('[ERROR]', JSON.stringify(errorContext), err);
+  const errorCode = getErrorCode(err);
+  console.error({
+    context: {
+      method: req.method,
+      path: req.path,
+      timestamp: new Date().toISOString(),
+    },
+    error: {
+      message: err.message,
+      stack: err.stack,
+      code: errorCode
+    }
+  });
 
   // PRIORITY 1: Handle unified AppError (production errors with domain codes)
   if (err instanceof AppError) {
-    const response: any = {
+    const response: ErrorResponse = {
       error: err.code,
       message: err.message,
     };
@@ -101,7 +124,7 @@ export function errorHandler(
 
   // PRIORITY 3: Handle PostgreSQL errors
   if ('code' in err) {
-    const pgError = err as any;
+    const pgError = err as PostgresError;
 
     // Unique constraint violation
     if (pgError.code === PG_ERROR_CODES.UNIQUE_VIOLATION) {

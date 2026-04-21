@@ -28,50 +28,67 @@ type DecayWorkerErrorContext = {
   jobIds: string[];
 };
 
+interface StructuredError {
+  type: string;
+  message: string;
+  code?: string;
+  statusCode?: number;
+  details?: Record<string, any>;
+  stack?: string;
+}
+
+function structureError(err: unknown): StructuredError {
+  if (err instanceof AppError) {
+    return {
+      type: err.name,
+      message: err.message,
+      code: err.code,
+      statusCode: err.statusCode,
+      details: err.details,
+      stack: err.stack,
+    };
+  }
+  
+  if (err instanceof Error) {
+    return {
+      type: err.constructor.name,
+      message: err.message,
+      stack: err.stack,
+    };
+  }
+  
+  if (typeof err === 'object' && err !== null) {
+    const objErr = err as Record<string, any>;
+    return {
+      type: objErr.name || 'UnknownError',
+      message: objErr.message || 'Unknown worker error',
+      code: objErr.code,
+      stack: objErr.stack,
+    };
+  }
+  
+  return {
+    type: 'UnknownError',
+    message: String(err),
+  };
+}
+
 function logDecayWorkerError(
   err: unknown,
   context: DecayWorkerErrorContext
 ): void {
   const timestamp = new Date().toISOString();
+  const structuredError = structureError(err);
 
-  if (err instanceof AppError) {
-    console.error('DECAY_WORKER_APP_ERROR', {
-      errorType: err.name,
-      errorCode: err.code,
-      statusCode: err.statusCode,
-      message: err.message,
-      batchSize: context.batchSize,
-      jobIds: context.jobIds,
-      details: err.details,
-      timestamp,
-    });
-    return;
-  }
-
-  if (typeof err === 'object' && err !== null && 'code' in err) {
-    const dbError = err as Error & { code?: string; detail?: string };
-    console.error('DECAY_WORKER_DB_ERROR', {
-      errorType: dbError.name || 'DatabaseError',
-      errorCode: dbError.code || 'DB_ERROR',
-      message: dbError.message,
-      batchSize: context.batchSize,
-      jobIds: context.jobIds,
-      detail: dbError.detail,
-      stack: dbError.stack,
-      timestamp,
-    });
-    return;
-  }
-
-  const unknownError = err instanceof Error ? err : new Error(String(err));
-  console.error('DECAY_WORKER_UNKNOWN_ERROR', {
-    errorType: unknownError.name || 'UnknownError',
-    errorCode: 'UNKNOWN_ERROR',
-    message: unknownError.message,
-    batchSize: context.batchSize,
-    jobIds: context.jobIds,
-    stack: unknownError.stack,
+  console.error({
+    event: 'DECAY_WORKER_ERROR',
     timestamp,
+    error: structuredError,
+    jobId: context.jobIds?.length ? context.jobIds[0] : undefined,
+    metadata: {
+      batchSize: context.batchSize,
+      jobIds: context.jobIds,
+    }
   });
 }
 

@@ -13,6 +13,7 @@ export default function JobCard({ job, currentUserEmail, onUpdate }) {
     if (job?.id) {
       loadPipeline();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [job?.id]);
 
   if (!job) return null;

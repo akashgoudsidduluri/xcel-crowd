@@ -5,7 +5,7 @@
  * Centralized type definitions for type-safe database operations.
  */
 
-import { PoolClient, QueryResult } from 'pg';
+import { QueryResult } from 'pg';
 import { ApplicationStatus } from '../stateMachine';
 
 export interface Job {
@@ -49,10 +49,15 @@ export interface AuditLog {
  * Pass to all database operations to ensure atomicity
  */
 export interface TransactionContext {
-  client: PoolClient;
   query: (text: string, values?: any[]) => Promise<QueryResult>;
-  commit: () => Promise<void>;
-  rollback: () => Promise<void>;
+}
+
+export interface WaitlistedApplicationRow {
+  id: string;
+  applicant_id: string;
+  queue_position: number;
+  penalty_count: number;
+  created_at?: Date;
 }
 
 /**
@@ -91,4 +96,16 @@ export interface QueueEntry {
   queuePosition: number;
   status: ApplicationStatus;
   createdAt: Date;
+}
+
+/**
+ * Expired pending ACK application for decay worker
+ */
+export interface ExpiredPendingAckApplication {
+  id: string;
+  job_id: string;
+  applicant_id: string;
+  status: ApplicationStatus;
+  queue_position: number | null;
+  penalty_count: number;
 }
