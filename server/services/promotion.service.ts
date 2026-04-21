@@ -150,6 +150,7 @@ export async function cascadePromotion(
   }
 
   // STEP 3: Promote the next N applications in queue order using a single query
+  const timeoutSeconds = job.ack_timeout_seconds || 30;
   const promoteResult = await ctx.query(
     `WITH ranked_waitlist AS (
        SELECT id, applicant_id,
@@ -162,11 +163,11 @@ export async function cascadePromotion(
      )
      UPDATE applications
      SET status = 'PENDING_ACK',
-         ack_deadline = NOW() + INTERVAL '30 seconds',
+         ack_deadline = NOW() + ($3 || ' seconds')::INTERVAL,
          updated_at = NOW()
      WHERE id IN (SELECT id FROM to_promote)
      RETURNING id, applicant_id`,
-    [jobId, availableSlots]
+    [jobId, availableSlots, timeoutSeconds]
   );
 
   const promoted = promoteResult.rows.map(row => ({

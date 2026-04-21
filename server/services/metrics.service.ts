@@ -1,4 +1,3 @@
-import { PoolClient } from 'pg';
 import { TransactionContext } from '../db/transactions';
 import { AppError } from '../errors';
 
@@ -23,7 +22,7 @@ export interface JobMetrics {
   // Historical / Turnover metrics
   turnoverRate: number; // Hired + Rejected / Total applications
   decayFrequency: number; // Number of expirations
-  avgWaitTimeSeconds: number;
+  avgWaitTimeSeconds: string;
   
   // Health markers
   isAtCapacity: boolean;
@@ -105,7 +104,7 @@ export async function getJobMetrics(
     waitlistSize,
     turnoverRate: outcomesCount, // Simple count for now, could be relative to active slots
     decayFrequency: parseInt(auditResult.rows[0].decay_count || 0, 10),
-    avgWaitTimeSeconds: parseFloat(waitTimeResult.rows[0].avg_wait || 0).toFixed(2) as any,
+    avgWaitTimeSeconds: parseFloat(waitTimeResult.rows[0].avg_wait || 0).toFixed(2),
     isAtCapacity: occupancy >= capacity,
     isStalled: waitlistSize > 0 && occupancy < capacity // Warning: available slots but waitlist exists
   };

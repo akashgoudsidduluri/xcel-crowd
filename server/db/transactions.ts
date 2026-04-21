@@ -10,9 +10,13 @@
  * - Prevents race conditions and double-booking
  */
 
-import { Pool, PoolClient, QueryResult } from 'pg';
+import { Pool } from 'pg';
 import { AppError, ERROR_CODES } from '../errors';
-import { TransactionContext, ApplicationStatus } from './types';
+import { TransactionContext } from './types';
+import { ApplicationStatus } from '../stateMachine';
+
+// Re-export TransactionContext for convenience (also defined in ./types)
+export { TransactionContext } from './types';
 
 /**
  * Start a new transaction

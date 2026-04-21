@@ -20,25 +20,33 @@
  * 11. Load test (100+ concurrent)
  */
 
-import { describe, test, expect, jest } from '@jest/globals';
-import { pool } from '../db/pool';
+import { describe, test, expect, jest, beforeAll, afterAll } from '@jest/globals';
+import { Pool } from 'pg';
 
-// @ts-ignore - Jest mock setup for testing
-jest.mock('../db/pool', () => {
-  const mockClient = {
-    // @ts-ignore - Mock for testing
-    query: jest.fn().mockResolvedValue({ rows: [] }),
-    // @ts-ignore - Mock for testing
-    release: jest.fn(),
-  };
+// Use real PostgreSQL database for testing
+const pool = new Pool({
+  user: process.env.DB_TEST_USER || 'postgres',
+  password: process.env.DB_TEST_PASSWORD || 'postgres',
+  host: process.env.DB_TEST_HOST || 'localhost',
+  port: parseInt(process.env.DB_TEST_PORT || '5432', 10),
+  database: process.env.DB_TEST_DATABASE || 'xcelcrowd_test',
+});
 
-  const mPool = {
-    // @ts-ignore - Mock for testing
-    connect: jest.fn().mockResolvedValue(mockClient),
-    // @ts-ignore - Mock for testing
-    query: jest.fn().mockResolvedValue({ rows: [] }),
-  };
-  return { pool: mPool };
+beforeAll(async () => {
+  // Setup test database
+  try {
+    const client = await pool.connect();
+    await client.query('BEGIN');
+    client.release();
+  } catch (err) {
+    console.error('Failed to connect to test database:', err);
+    process.exit(1);
+  }
+});
+
+afterAll(async () => {
+  // Cleanup and close pool
+  await pool.end();
 });
 import {
   applyToJob,
