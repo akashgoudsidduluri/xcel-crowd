@@ -20,10 +20,17 @@ export interface JobMetrics {
   waitlistSize: number;
   
   // Historical / Turnover metrics
+  hiredCount: number;
+  rejectedCount: number;
   turnoverCount: number; // Total HIRED + REJECTED
   decayFrequency: number; // Number of expirations
   avgWaitTimeSeconds: string;
   
+  // Insight Metrics
+  conversionRate: number;   // HIRED / TOTAL
+  waitlistPressure: number; // WAITLISTED / CAPACITY
+  decayRate: number;        // DECAYED / TOTAL
+
   // Health markers
   isAtCapacity: boolean;
   isStalled: boolean; // True if waitlisted but no movement for X hours
@@ -103,11 +110,19 @@ export async function getJobMetrics(
     timestamp: new Date().toISOString(),
     occupancy,
     capacity,
-    utilization: capacity > 0 ? occupancy / capacity : 0,
+    utilization: capacity > 0 ? Math.round((occupancy / capacity) * 100) / 100 : 0,
     waitlistSize,
+    hiredCount,
+    rejectedCount,
     turnoverCount: outcomesCount,
     decayFrequency: parseInt(auditResult.rows[0].decay_count || 0, 10),
     avgWaitTimeSeconds: parseFloat(waitTimeResult.rows[0].avg_wait || 0).toFixed(2),
+    
+    // Derived Insights
+    conversionRate: totalApplications > 0 ? Math.round((hiredCount / totalApplications) * 100) / 100 : 0,
+    waitlistPressure: capacity > 0 ? Math.round((waitlistSize / capacity) * 100) / 100 : 0,
+    decayRate: totalApplications > 0 ? Math.round((parseInt(auditResult.rows[0].decay_count || 0, 10) / totalApplications) * 100) / 100 : 0,
+
     isAtCapacity: occupancy >= capacity,
     isStalled: waitlistSize > 0 && occupancy < capacity // Warning: available slots but waitlist exists
   };

@@ -193,10 +193,22 @@ async function processDecayedApplications(pool: Pool): Promise<void> {
 
         // Log transitions efficiently
         for (const app of apps) {
+          // Audit Log (Database)
           await logTransition(ctx, app.id, 'PENDING_ACK', 'WAITLISTED', {
             reason: 'ack_deadline_expired',
             penalty_count: app.penalty_count + 1,
           });
+
+          // Application Log (Observability)
+          console.log(JSON.stringify({
+            event: 'DECAY_PROCESSED',
+            appId: app.id,
+            jobId,
+            from: 'PENDING_ACK',
+            to: 'WAITLISTED',
+            penaltyApplied: true,
+            timestamp: new Date().toISOString()
+          }));
         }
 
         // CRITICAL: Cascade promotion fills freed slots atomically
