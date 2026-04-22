@@ -11,20 +11,11 @@ import { Pool } from 'pg';
 import { z } from 'zod';
 import { withTransaction } from '../db/transactions';
 import { generalLimiter } from '../middlewares/rateLimiter';
-import { getJobMetrics } from '../services/metrics.service';
+import { getJobMetrics, parseCount, buildPipelineSummary } from '../services/metrics.service';
 import { ValidationError, NotFoundError, AppError } from '../errors';
 
 export function createJobRoutes(pool: Pool): Router {
   const router = Router();
-
-  const parseCount = (value: unknown): number => parseInt(String(value ?? 0), 10);
-
-  const buildPipelineSummary = (stats: Record<string, unknown>) => ({
-    active: parseCount(stats.active),
-    waitlisted: parseCount(stats.waitlisted),
-    hired: parseCount(stats.hired),
-    rejected: parseCount(stats.rejected),
-  });
 
   // Zod schema
   const createJobSchema = z.object({

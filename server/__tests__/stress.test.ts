@@ -58,7 +58,7 @@ import {
 import { promoteNext, cascadePromotion, getQueueStats } from '../services/promotion.service';
 import { withTransaction, getQueueState } from '../db/transactions';
 import { getAuditTrail } from '../services/auditLog.service';
-import { startDecayWorker, stopDecayWorker } from '../services/decayWorker';
+import { processDecayedApplications } from '../services/decayWorker';
 import { ERROR_CODES } from '../errors';
 
 describe('Stress Tests', () => {
@@ -183,9 +183,6 @@ test('Acknowledgment flow', async () => {
 // ============================================================================
 
 test('Decay mechanism', async () => {
-  // Start decay worker with 1 second interval for testing
-  startDecayWorker(pool, 1000);
-
   const jobId = await withTransaction(pool, async (ctx) => {
     const result = await ctx.query(
       'INSERT INTO jobs (title, capacity) VALUES ($1, $2) RETURNING id',
@@ -215,7 +212,7 @@ test('Decay mechanism', async () => {
   });
 
   // Wait for decay worker to process
-  await new Promise((resolve) => setTimeout(resolve, 3000));
+  await processDecayedApplications(pool);
 
   // Check app1 status
   const app1Check = await withTransaction(pool, async (ctx) => {
@@ -248,8 +245,6 @@ test('Decay mechanism', async () => {
   expect(finalQueue.rows[finalQueue.rows.length - 1].id).toBe(app1.applicationId); // True Tail
   expect(stats.pendingAck).toBe(1); // Next user promoted
   expect(finalQueue.rows.map(r => r.queue_position)).toEqual([1, 2]); // Contiguous
-
-  stopDecayWorker();
 });
 
 // ============================================================================

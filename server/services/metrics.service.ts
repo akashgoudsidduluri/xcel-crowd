@@ -7,6 +7,25 @@ import { AppError } from '../errors';
  * Provides structured business intelligence and system health observations.
  */
 
+/**
+ * Parse and convert count value to integer
+ */
+export function parseCount(value: unknown): number {
+  return parseInt(String(value ?? 0), 10);
+}
+
+/**
+ * Build pipeline summary from application statistics
+ */
+export function buildPipelineSummary(stats: Record<string, unknown>) {
+  return {
+    active: parseCount(stats.active),
+    waitlisted: parseCount(stats.waitlisted),
+    hired: parseCount(stats.hired),
+    rejected: parseCount(stats.rejected),
+  };
+}
+
 export interface JobMetrics {
   jobId: string;
   timestamp: string;
@@ -75,7 +94,7 @@ export async function getJobMetrics(
     throw new AppError(
       'Failed to aggregate application statistics',
       500,
-      'STATS_AGGREGATION_FAILED'
+      'METRICS_STATS_AGGREGATION_FAILED'
     );
   }
   
@@ -102,9 +121,9 @@ export async function getJobMetrics(
   
   if (!auditResult.rows[0]) {
     throw new AppError(
-      'Failed to retrieve decay frequency',
+      'Failed to retrieve decay frequency metrics',
       500,
-      'DECAY_FREQUENCY_FAILED'
+      'METRICS_DECAY_FREQUENCY_FAILED'
     );
   }
   
@@ -121,9 +140,9 @@ export async function getJobMetrics(
 
   if (!waitTimeResult.rows[0]) {
     throw new AppError(
-      'Failed to calculate average wait time',
+      'Failed to calculate average wait time metrics',
       500,
-      'WAIT_TIME_CALCULATION_FAILED'
+      'METRICS_WAIT_TIME_CALCULATION_FAILED'
     );
   }
 

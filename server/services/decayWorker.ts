@@ -104,12 +104,8 @@ export function startDecayWorker(
 
   workerInterval = setInterval(() => {
     processDecayedApplications(pool).catch((err) => {
-      logDecayWorkerError(err, {
-        batchSize: 0,
-        jobIds: [],
-      });
-      // Re-thrown errors propagate to monitoring/alerting systems
-      // Centralized structured logging prevents duplicate/noisy logs
+      // Log and swallow: error is already logged via logDecayWorkerError
+      // Prevents duplicate logs in monitoring systems and ensures process continues
     });
   }, intervalMs);
 }
@@ -246,7 +242,7 @@ async function processJobDecayedApps(
  * - Simple single transaction (no nested locks or advisory locks)
  * - Cascade promotion fills all freed slots immediately
  */
-async function processDecayedApplications(pool: Pool): Promise<void> {
+export async function processDecayedApplications(pool: Pool): Promise<void> {
   if (isRunning) {
     return;
   }

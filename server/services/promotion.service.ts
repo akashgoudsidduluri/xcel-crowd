@@ -12,7 +12,7 @@
  */
 
 import { Pool } from 'pg';
-import { withTransaction, TransactionContext, getNextWaitlistedForPromotion, countActiveAndPendingAck, reindexQueuePositions, getJobForUpdate } from '../db/transactions';
+import { TransactionContext, getNextWaitlistedForPromotion, countActiveAndPendingAck, reindexQueuePositions, getJobForUpdate } from '../db/transactions';
 import { validateTransition } from '../stateMachine';
 import { logTransition } from './auditLog.service';
 import { AppError } from '../errors';
@@ -107,11 +107,14 @@ export async function promoteNext(
  * CASCADE PROMOTION (FILL ALL AVAILABLE SLOTS)
  * ============================================================================
  * 
- * Repeatedly calls promoteNext until:
- * - Capacity is full, OR
- * - Waitlist is empty
- * 
- * Each promotion is done in a separate transaction to avoid long locks
+ * Atomically promotes all waiting applicants up to available capacity using a single SQL query:
+ * - Lock job and get capacity
+ * - Count current ACTIVE + PENDING_ACK occupancy
+ * - Calculate available slots
+ * - Use CTE with ROW_NUMBER() to rank waitlisted applications
+ * - UPDATE all applicants within available slots to PENDING_ACK in one transaction
+ * - Reindex queue positions
+ * - Log each promotion transition
  */
 export async function cascadePromotion(
   ctx: TransactionContext,
