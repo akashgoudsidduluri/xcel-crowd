@@ -6,7 +6,7 @@
  */
 
 import { Pool } from 'pg';
-import { withTransaction, reindexQueuePositions, getJobForUpdate } from '../db/transactions';
+import { withTransaction, reindexQueuePositions, TransactionContext } from '../db/transactions';
 import { logTransition } from './auditLog.service';
 import { cascadePromotion } from './promotion.service';
 import { AppError } from '../errors';
@@ -29,6 +29,7 @@ interface StructuredError {
 }
 
 function structureError(err: unknown): StructuredError {
+  // Handle AppError (custom error class with full context)
   if (err instanceof AppError) {
     return {
       type: err.name,
@@ -39,7 +40,8 @@ function structureError(err: unknown): StructuredError {
       stack: err.stack,
     };
   }
-  
+
+  // Handle standard Error objects
   if (err instanceof Error) {
     return {
       type: err.constructor.name,
@@ -47,7 +49,8 @@ function structureError(err: unknown): StructuredError {
       stack: err.stack,
     };
   }
-  
+
+  // Handle plain objects with error-like shape
   if (typeof err === 'object' && err !== null) {
     const objErr = err as Record<string, any>;
     return {
@@ -57,7 +60,8 @@ function structureError(err: unknown): StructuredError {
       stack: objErr.stack,
     };
   }
-  
+
+  // Fallback for primitive values or other unknown types
   return {
     type: 'UnknownError',
     message: String(err),
@@ -104,9 +108,8 @@ export function startDecayWorker(
         batchSize: 0,
         jobIds: [],
       });
-      // Re-thrown errors from processDecayedApplications propagate here
-      // Log and let it bubble so monitoring/alerting systems catch it
-      console.error('[DECAY WORKER] Process failed:', err.message);
+      // Re-thrown errors propagate to monitoring/alerting systems
+      // Centralized structured logging prevents duplicate/noisy logs
     });
   }, intervalMs);
 }
@@ -120,6 +123,117 @@ export function stopDecayWorker(): void {
     workerInterval = null;
     console.log('[DECAY WORKER] Stopped');
   }
+}
+
+/**
+ * Find and lock expired PENDING_ACK applications for processing
+ * Uses FOR UPDATE SKIP LOCKED to ensure multi-instance safety
+ */
+async function findExpiredApplications(ctx: TransactionContext): Promise<Array<{ id: string; job_id: string; penalty_count: number }>> {
+  const result = await ctx.query(
+    `SELECT id, job_id, penalty_count
+     FROM applications
+     WHERE status = 'PENDING_ACK' 
+       AND ack_deadline < NOW()
+     ORDER BY ack_deadline ASC
+     FOR UPDATE SKIP LOCKED
+     LIMIT 100`
+  );
+  return result.rows;
+}
+
+/**
+ * Group expired applications by job ID for efficient batch processing
+ */
+function groupApplicationsByJob(
+  apps: Array<{ id: string; job_id: string; penalty_count: number }>
+): Map<string, Array<{ id: string; penalty_count: number }>> {
+  const jobMap = new Map<string, Array<{ id: string; penalty_count: number }>>();
+  
+  for (const app of apps) {
+    if (!jobMap.has(app.job_id)) {
+      jobMap.set(app.job_id, []);
+    }
+    jobMap.get(app.job_id)!.push({ id: app.id, penalty_count: app.penalty_count });
+  }
+  
+  return jobMap;
+}
+
+/**
+ * Update statuses and queue positions for decayed applications
+ */
+async function updateDecayedApplicationStatuses(
+  ctx: TransactionContext,
+  jobId: string,
+  appIds: string[]
+): Promise<void> {
+  await ctx.query(
+    `WITH decayed_applications AS (
+       SELECT id::uuid, ordinality
+       FROM unnest($1::uuid[]) WITH ORDINALITY AS t(id, ordinality)
+     )
+     UPDATE applications a
+     SET status = 'WAITLISTED',
+         penalty_count = a.penalty_count + 1,
+         queue_position = (SELECT COALESCE(MAX(queue_position), 0) FROM applications WHERE job_id = $2 AND status = 'WAITLISTED') + d.ordinality,
+         ack_deadline = NULL,
+         updated_at = NOW()
+     FROM decayed_applications d
+     WHERE a.id = d.id`,
+    [appIds, jobId]
+  );
+}
+
+/**
+ * Log state transitions for decayed applications (audit + observability)
+ */
+async function logDecayTransitions(
+  ctx: TransactionContext,
+  jobId: string,
+  apps: Array<{ id: string; penalty_count: number }>
+): Promise<void> {
+  for (const app of apps) {
+    // Audit Log (Database)
+    await logTransition(ctx, app.id, 'PENDING_ACK', 'WAITLISTED', {
+      reason: 'ack_deadline_expired',
+      penalty_count: app.penalty_count + 1,
+    });
+
+    // Application Log (Observability)
+    console.log(JSON.stringify({
+      event: 'DECAY_PROCESSED',
+      appId: app.id,
+      jobId,
+      from: 'PENDING_ACK',
+      to: 'WAITLISTED',
+      penaltyApplied: true,
+      timestamp: new Date().toISOString()
+    }));
+  }
+}
+
+/**
+ * Process a single job's decayed applications
+ */
+async function processJobDecayedApps(
+  ctx: TransactionContext,
+  jobId: string,
+  apps: Array<{ id: string; penalty_count: number }>
+): Promise<void> {
+  const appIds = apps.map(a => a.id);
+  
+  // Update status and queue positions
+  await updateDecayedApplicationStatuses(ctx, jobId, appIds);
+  
+  // Reindex queue positions
+  await reindexQueuePositions(ctx, jobId);
+  
+  // Log all transitions
+  await logDecayTransitions(ctx, jobId, apps);
+  
+  // Fill freed slots via cascade promotion
+  await cascadePromotion(ctx, jobId);
 }
 
 /**
@@ -146,85 +260,22 @@ async function processDecayedApplications(pool: Pool): Promise<void> {
   try {
     // SINGLE TRANSACTION: Atomically decay expired apps and fill slots
     await withTransaction(pool, async (ctx) => {
-      // STEP 1: Find and lock expired applications for this worker
-      // FOR UPDATE SKIP LOCKED ensures:
-      // - Other worker instances won't re-process these rows
-      // - We only process what we can claim atomically
-      const expiredAppsResult = await ctx.query(
-        `SELECT id, job_id, penalty_count
-         FROM applications
-         WHERE status = 'PENDING_ACK' 
-           AND ack_deadline < NOW()
-         ORDER BY ack_deadline ASC
-         FOR UPDATE SKIP LOCKED
-         LIMIT 100`
-      );
+      // Find and lock expired applications
+      const expiredApps = await findExpiredApplications(ctx);
 
-      if (expiredAppsResult.rows.length === 0) {
+      if (expiredApps.length === 0) {
         return; // No expired applications to process
       }
 
-      errorContext.batchSize = expiredAppsResult.rows.length;
+      errorContext.batchSize = expiredApps.length;
 
-      // STEP 2: Group by job for batch processing
-      const jobMap = new Map<string, Array<{ id: string; penalty_count: number }>>();
-      for (const app of expiredAppsResult.rows) {
-        if (!jobMap.has(app.job_id)) {
-          jobMap.set(app.job_id, []);
-        }
-        jobMap.get(app.job_id)!.push({ id: app.id, penalty_count: app.penalty_count });
-      }
+      // Group applications by job for batch processing
+      const jobMap = groupApplicationsByJob(expiredApps);
       errorContext.jobIds = Array.from(jobMap.keys());
 
-      // STEP 3: Process each job (within same transaction)
+      // Process each job's decayed applications
       for (const [jobId, apps] of jobMap.entries()) {
-        // Lock job for capacity check in cascade
-        await getJobForUpdate(ctx, jobId);
-
-        // Move expired apps to the back of the queue in claimed order.
-        const appIds = apps.map(a => a.id);
-        await ctx.query(
-          `WITH decayed_applications AS (
-             SELECT id::uuid, ordinality
-             FROM unnest($1::uuid[]) WITH ORDINALITY AS t(id, ordinality)
-           )
-           UPDATE applications a
-           SET status = 'WAITLISTED',
-               penalty_count = a.penalty_count + 1,
-               queue_position = (SELECT COALESCE(MAX(queue_position), 0) FROM applications WHERE job_id = $2 AND status = 'WAITLISTED') + d.ordinality,
-               ack_deadline = NULL,
-               updated_at = NOW()
-           FROM decayed_applications d
-           WHERE a.id = d.id`,
-          [appIds, jobId]
-        );
-
-        // FIX: Ensure queue is repaired and slots are filled in ONE transaction
-        await reindexQueuePositions(ctx, jobId);
-
-        // Log transitions efficiently
-        for (const app of apps) {
-          // Audit Log (Database)
-          await logTransition(ctx, app.id, 'PENDING_ACK', 'WAITLISTED', {
-            reason: 'ack_deadline_expired',
-            penalty_count: app.penalty_count + 1,
-          });
-
-          // Application Log (Observability)
-          console.log(JSON.stringify({
-            event: 'DECAY_PROCESSED',
-            appId: app.id,
-            jobId,
-            from: 'PENDING_ACK',
-            to: 'WAITLISTED',
-            penaltyApplied: true,
-            timestamp: new Date().toISOString()
-          }));
-        }
-
-        // CRITICAL: Cascade promotion fills freed slots atomically
-        // This is safe because everything is in ONE transaction
-        await cascadePromotion(ctx, jobId);
+        await processJobDecayedApps(ctx, jobId, apps);
       }
     });
   } catch (err) {

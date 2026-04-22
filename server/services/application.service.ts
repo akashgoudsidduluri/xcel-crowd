@@ -221,15 +221,11 @@ export async function withdrawApplication(
 }> {
   // STEP 1: Withdraw inside transaction
   const result = await withTransaction(pool, async (ctx) => {
-    // LOCK ORDER: 1. Job, 2. Application
-    // We need job ID first to lock job
+    // LOCK ORDER: Job lock handled by promoteNext if needed
     const initialApp = await getApplication(ctx, applicationId);
     const jobId = initialApp.job_id;
 
-    // 1. Lock Job (Ensures capacity checks in promotion are stable)
-    await getJobForUpdate(ctx, jobId);
-
-    // 2. Lock Application (FOR UPDATE)
+    // Lock Application (FOR UPDATE)
     const app = await getApplicationForUpdate(ctx, applicationId);
 
     // Idempotency check
@@ -312,14 +308,11 @@ export async function exitApplication(
 
   // STEP 1: Exit inside transaction
   const result = await withTransaction(pool, async (ctx) => {
-    // LOCK ORDER: 1. Job, 2. Application
+    // LOCK ORDER: Job lock handled by promoteNext/cascadePromotion if needed
     const initialApp = await getApplication(ctx, applicationId);
     const jobId = initialApp.job_id;
 
-    // 1. Lock Job
-    await getJobForUpdate(ctx, jobId);
-
-    // 2. Lock Application
+    // Lock Application
     const app = await getApplicationForUpdate(ctx, applicationId);
 
     // Idempotency check

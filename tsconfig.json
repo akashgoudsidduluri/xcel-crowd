@@ -25,6 +25,7 @@
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "allowSyntheticDefaultImports": true,
+    "ignoreDeprecations": "6.0",
     "moduleResolution": "node"
   },
   "include": [

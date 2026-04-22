@@ -19,37 +19,35 @@ import { AppError } from '../errors';
 
 
 /**
- * ============================================================================
- * PROMOTE NEXT (SINGLE PROMOTION)
- * ============================================================================
+ * Promote next waitlisted applicant to PENDING_ACK (single slot)
  * 
  * Atomically:
- * 1. Lock job and get capacity
- * 2. Count current ACTIVE + PENDING_ACK
- * 3. If capacity available, get next WAITLISTED with FOR UPDATE SKIP LOCKED
- * 4. If found, move to PENDING_ACK with new deadline
- * 5. Reindex queue positions
- * 6. Log transition
+ * 1. Get/lock job and check capacity
+ * 2. Find next WAITLISTED with FOR UPDATE SKIP LOCKED
+ * 3. Move to PENDING_ACK with ack deadline
+ * 4. Reindex queue positions
+ * 5. Log transition
  * 
- * Returns the promoted application or null if no promotion happened
+ * Accepts optional job parameter to avoid redundant lock acquisition
  */
 export async function promoteNext(
   ctx: TransactionContext,
-  jobId: string
+  jobId: string,
+  job?: { id: string; capacity: number; ack_timeout_seconds?: number }
 ): Promise<{
   applicationId: string;
   applicantId: string;
   ackDeadline: string;
   newQueueSize: number;
 } | null> {
-  // STEP 1: Lock job
-  const job = await getJobForUpdate(ctx, jobId);
+  // STEP 1: Lock job (skip if already provided by caller)
+  const jobData = job || await getJobForUpdate(ctx, jobId);
 
   // STEP 2: Count current occupants
   const currentCount = await countActiveAndPendingAck(ctx, jobId);
 
   // STEP 3: Check if capacity available
-  if (currentCount >= job.capacity) {
+  if (currentCount >= jobData.capacity) {
     return null; // No capacity, cannot promote
   }
 
@@ -64,7 +62,7 @@ export async function promoteNext(
   validateTransition('WAITLISTED', 'PENDING_ACK');
 
   // STEP 6: Calculate new deadline (using job configuration)
-  const timeoutSeconds = job.ack_timeout_seconds || 30;
+  const timeoutSeconds = jobData.ack_timeout_seconds || 30;
   const deadline = new Date();
   deadline.setSeconds(deadline.getSeconds() + timeoutSeconds);
   const ackDeadline = deadline.toISOString();
@@ -90,7 +88,7 @@ export async function promoteNext(
   // STEP 10: Log transition
   await logTransition(ctx, nextApp.id, 'WAITLISTED', 'PENDING_ACK', {
     reason: 'automatic_promotion_from_waitlist',
-    capacity: job.capacity,
+    capacity: jobData.capacity,
     currentOccupancy: currentCount + 1, // Including this one
     nextQueuePosition: 1, // Reindexed, so first is now 1
     ackDeadline,

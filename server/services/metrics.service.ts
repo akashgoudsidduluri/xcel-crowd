@@ -71,6 +71,14 @@ export async function getJobMetrics(
     [jobId]
   );
   
+  if (!statsResult.rows[0]) {
+    throw new AppError(
+      'Failed to aggregate application statistics',
+      500,
+      'STATS_AGGREGATION_FAILED'
+    );
+  }
+  
   const stats = statsResult.rows[0];
   const activeCount = parseInt(stats.active || 0, 10);
   const pendingAckCount = parseInt(stats.pending_ack || 0, 10);
@@ -92,6 +100,14 @@ export async function getJobMetrics(
     [jobId]
   );
   
+  if (!auditResult.rows[0]) {
+    throw new AppError(
+      'Failed to retrieve decay frequency',
+      500,
+      'DECAY_FREQUENCY_FAILED'
+    );
+  }
+  
   // 4. Calculate Average Wait Time (Waitlisted -> Pending Ack)
   const waitTimeResult = await ctx.query(
     `SELECT AVG(EXTRACT(EPOCH FROM (l.created_at - a.created_at))) as avg_wait
@@ -103,17 +119,13 @@ export async function getJobMetrics(
     [jobId]
   );
 
-  // 5. Check for recent promotion activity (last 60 seconds)
-  const recentPromotionsResult = await ctx.query(
-    `SELECT COUNT(*) as promotion_count
-     FROM audit_logs
-     WHERE job_id = $1
-       AND from_status = 'WAITLISTED'
-       AND to_status = 'PENDING_ACK'
-       AND created_at > NOW() - INTERVAL '60 seconds'`,
-    [jobId]
-  );
-  const recentPromotions = parseInt(recentPromotionsResult.rows[0].promotion_count || 0, 10);
+  if (!waitTimeResult.rows[0]) {
+    throw new AppError(
+      'Failed to calculate average wait time',
+      500,
+      'WAIT_TIME_CALCULATION_FAILED'
+    );
+  }
 
   return {
     jobId,
@@ -134,5 +146,6 @@ export async function getJobMetrics(
     decayRate: totalApplications > 0 ? Math.round((parseInt(auditResult.rows[0].decay_count || 0, 10) / totalApplications) * 100) / 100 : 0,
 
     isAtCapacity: occupancy >= capacity,
-    isStalled: waitlistSize > 0 && occupancy < capacity && recentPromotions === 0
+    isStalled: waitlistSize > 0 && occupancy < capacity
   };
+}
