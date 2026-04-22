@@ -106,8 +106,7 @@ export function startDecayWorker(
 
   workerInterval = setInterval(() => {
     processDecayedApplications(pool).catch((err) => {
-      // Log and swallow: error is already logged via logDecayWorkerError
-      // Prevents duplicate logs in monitoring systems and ensures process continues
+      console.error("[DECAY WORKER CRITICAL FAILURE] Uncaught exception processing decay interval:", err);
     });
   }, intervalMs);
 }
