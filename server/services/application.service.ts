@@ -125,6 +125,8 @@ export async function applyToJob(
       }
     );
 
+    console.info("APPLICATION_CREATED", { applicationId, status, queuePosition, ackDeadline });
+
     return {
       applicationId,
       status,
@@ -373,40 +375,42 @@ export async function getApplicationDetails(
   applicationId: string
 ): Promise<any> {
   return await withTransaction(pool, async (ctx) => {
-    const app = await getApplication(ctx, applicationId);
-
-    // Get applicant info
-    const applicantResult = await ctx.query(
-      'SELECT id, email, name FROM applicants WHERE id = $1',
-      [app.applicant_id]
+    const result = await ctx.query(
+      `SELECT 
+         a.id, a.status, a.queue_position, a.ack_deadline, a.penalty_count, a.created_at, a.updated_at,
+         ap.id as applicant_id, ap.email, ap.name,
+         j.id as job_id, j.title, j.capacity
+       FROM applications a
+       JOIN applicants ap ON a.applicant_id = ap.id
+       JOIN jobs j ON a.job_id = j.id
+       WHERE a.id = $1`,
+      [applicationId]
     );
-    const applicant = applicantResult.rows[0];
 
-    // Get job info
-    const jobResult = await ctx.query(
-      'SELECT id, title, capacity FROM jobs WHERE id = $1',
-      [app.job_id]
-    );
-    const job = jobResult.rows[0];
+    if (result.rows.length === 0) {
+      throw new AppError('Application not found', 404, ERROR_CODES.APP_NOT_FOUND);
+    }
+
+    const row = result.rows[0];
 
     return {
-      id: app.id,
+      id: row.id,
       applicant: {
-        id: applicant.id,
-        email: applicant.email,
-        name: applicant.name,
+        id: row.applicant_id,
+        email: row.email,
+        name: row.name,
       },
       job: {
-        id: job.id,
-        title: job.title,
-        capacity: job.capacity,
+        id: row.job_id,
+        title: row.title,
+        capacity: row.capacity,
       },
-      status: app.status,
-      queue_position: app.queue_position,
-      ack_deadline: app.ack_deadline,
-      penalty_count: app.penalty_count,
-      created_at: app.created_at,
-      updated_at: app.updated_at,
+      status: row.status,
+      queue_position: row.queue_position,
+      ack_deadline: row.ack_deadline,
+      penalty_count: row.penalty_count,
+      created_at: row.created_at,
+      updated_at: row.updated_at,
     };
   });
 }

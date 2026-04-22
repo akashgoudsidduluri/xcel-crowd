@@ -1,15 +1,16 @@
 import { Pool } from 'pg';
+import { config } from '../config';
 
 /**
  * Create database pool with hardened timeout settings
  */
 export const pool = new Pool({
-  user: process.env.DB_USER || 'postgres',
-  password: process.env.DB_PASSWORD || 'postgres',
-  host: process.env.DB_HOST || 'localhost',
-  port: parseInt(process.env.DB_PORT || '5432', 10),
-  database: process.env.DB_NAME || 'next_in_line',
-  connectionString: process.env.DATABASE_URL, // Overrides other settings if provided
+  user: config.DB_USER,
+  password: config.DB_PASSWORD,
+  host: config.DB_HOST,
+  port: config.DB_PORT,
+  database: config.DB_NAME,
+  connectionString: config.DATABASE_URL, // Overrides other settings if provided
   // Connection pool settings
   max: 20,                           // Max connections
   min: 2,                            // Min connections
@@ -79,5 +80,9 @@ export async function runMigrations(): Promise<void> {
       metadata JSONB DEFAULT '{}'::jsonb,
       created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
     );
+
+    CREATE INDEX IF NOT EXISTS idx_applications_job_status ON applications(job_id, status);
+    CREATE INDEX IF NOT EXISTS idx_queue_position ON applications(job_id, queue_position);
+    CREATE INDEX IF NOT EXISTS idx_ack_deadline ON applications(status, ack_deadline);
   `);
 }

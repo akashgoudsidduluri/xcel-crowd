@@ -94,6 +94,8 @@ export async function promoteNext(
     ackDeadline,
   });
 
+  console.info("PROMOTION_EXECUTED", { applicationId: nextApp.id, status: 'PENDING_ACK', ackDeadline });
+
   return {
     applicationId: nextApp.id,
     applicantId: nextApp.applicant_id,
@@ -183,6 +185,7 @@ export async function cascadePromotion(
     await logTransition(ctx, app.applicationId, 'WAITLISTED', 'PENDING_ACK', {
       reason: 'cascade_promotion',
     });
+    console.info("PROMOTION_EXECUTED", { applicationId: app.applicationId, status: 'PENDING_ACK' });
   }
 
   // STEP 5: Get final waitlist count

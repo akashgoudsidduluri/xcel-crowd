@@ -38,8 +38,9 @@ export default function Dashboard() {
 
   const handleCreateJob = async (e) => {
     e.preventDefault();
+    setError(null);
     if (!formData.title || !formData.capacity) {
-      alert('Please fill in all fields');
+      setError('Please fill in all fields');
       return;
     }
 
@@ -55,7 +56,7 @@ export default function Dashboard() {
       setShowForm(false);
       await loadJobs();
     } catch (err) {
-      alert(`Error creating job: ${err.message}`);
+      setError(`Error creating job: ${err.message}`);
     }
   };
 

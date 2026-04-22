@@ -13,6 +13,8 @@ import { AppError } from '../errors';
 
 let workerInterval: NodeJS.Timeout | null = null;
 let isRunning = false;
+let lastRunAt: number | null = null;
+let lastBatchSize: number = 0;
 
 type DecayWorkerErrorContext = {
   batchSize: number;
@@ -197,15 +199,14 @@ async function logDecayTransitions(
     });
 
     // Application Log (Observability)
-    console.log(JSON.stringify({
-      event: 'DECAY_PROCESSED',
+    console.info("DECAY_PROCESSED", {
       appId: app.id,
       jobId,
       from: 'PENDING_ACK',
       to: 'WAITLISTED',
       penaltyApplied: true,
       timestamp: new Date().toISOString()
-    }));
+    });
   }
 }
 
@@ -264,6 +265,8 @@ export async function processDecayedApplications(pool: Pool): Promise<void> {
       }
 
       errorContext.batchSize = expiredApps.length;
+      lastBatchSize = expiredApps.length;
+      lastRunAt = Date.now();
 
       // Group applications by job for batch processing
       const jobMap = groupApplicationsByJob(expiredApps);
@@ -285,12 +288,10 @@ export async function processDecayedApplications(pool: Pool): Promise<void> {
 /**
  * Health check - return worker status
  */
-export function getWorkerStatus(): {
-  isRunning: boolean;
-  isActive: boolean;
-} {
+export function getDecayWorkerHealth() {
   return {
-    isRunning: !!workerInterval,
-    isActive: !!workerInterval,
+    lastRunAt,
+    lastBatchSize,
+    isHealthy: lastRunAt ? (Date.now() - lastRunAt < 15000) : (!!workerInterval || isRunning),
   };
 }

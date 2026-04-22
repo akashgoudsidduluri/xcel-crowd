@@ -19,9 +19,10 @@ import 'dotenv/config'; // Load environment variables from .env
 import { createApplicationRoutes } from './routes/applications';
 import { createJobRoutes } from './routes/jobs';
 import { createApplicantRoutes } from './routes/applicants';
-import { startDecayWorker, stopDecayWorker } from './services/decayWorker';
+import { startDecayWorker, stopDecayWorker, getDecayWorkerHealth } from './services/decayWorker';
 import { pool } from './db/pool';
 import { errorHandler } from './middlewares/errorHandler';
+import { config } from './config';
 
 /**
  * Create and configure Express app
@@ -47,7 +48,11 @@ export function createApp(pool: Pool): Express {
 
   // Health check
   app.get('/health', (req: Request, res: Response) => {
-    res.status(200).json({ status: 'ok' });
+    res.status(200).json({ 
+      status: 'ok',
+      uptime: process.uptime(),
+      worker: getDecayWorkerHealth()
+    });
   });
 
   // Database health check
@@ -125,8 +130,7 @@ export async function startServer(
 
 // Start server if run directly
 if (require.main === module) {
-  const port = parseInt(process.env.PORT || '3001', 10);
-  startServer(port).catch((err) => {
+  startServer(config.PORT, config.DECAY_INTERVAL).catch((err) => {
     console.error('Failed to start server:', err);
     process.exit(1);
   });

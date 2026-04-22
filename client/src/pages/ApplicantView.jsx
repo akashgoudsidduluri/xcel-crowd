@@ -13,6 +13,7 @@ export default function ApplicantView() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
   const [updating, setUpdating] = useState(false);
+  const [message, setMessage] = useState(null);
 
   useEffect(() => {
     loadApplication();
@@ -36,10 +37,12 @@ export default function ApplicantView() {
   const handleAcknowledge = async () => {
     try {
       setUpdating(true);
+      setError(null);
       await acknowledgeApplication(applicationId);
       await loadApplication();
+      setMessage('Application successfully acknowledged.');
     } catch (err) {
-      alert(`Error acknowledging: ${err.message}`);
+      setError(`Error acknowledging: ${err.message}`);
     } finally {
       setUpdating(false);
     }
@@ -52,11 +55,12 @@ export default function ApplicantView() {
 
     try {
       setUpdating(true);
+      setError(null);
       await exitApplication(applicationId, outcome);
       await loadApplication();
-      alert(`Application marked as ${outcome}`);
+      setMessage(`Application marked as ${outcome}`);
     } catch (err) {
-      alert(`Error: ${err.message}`);
+      setError(`Error: ${err.message}`);
     } finally {
       setUpdating(false);
     }
@@ -84,6 +88,7 @@ export default function ApplicantView() {
 
   return (
     <div className="applicant-view">
+      {message && <div style={{background: '#e8f5e9', color: '#2e7d32', padding: '10px', marginBottom: '15px', borderRadius: '4px'}}>{message}</div>}
       <header className="applicant-header">
         <h1>{application.name}</h1>
         <p className="email">{application.email}</p>

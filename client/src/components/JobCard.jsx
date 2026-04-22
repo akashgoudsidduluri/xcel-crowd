@@ -8,6 +8,7 @@ export default function JobCard({ job, currentUserEmail, onUpdate }) {
   const [showForm, setShowForm] = useState(false);
   const [formData, setFormData] = useState({ name: '', email: '' });
   const [applying, setApplying] = useState(false);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
     if (job?.id) {
@@ -42,8 +43,9 @@ export default function JobCard({ job, currentUserEmail, onUpdate }) {
 
   const handleApply = async (e) => {
     e.preventDefault();
+    setError(null);
     if (!formData.name || !formData.email) {
-      alert('Please fill in all fields');
+      setError('Please fill in all fields');
       return;
     }
 
@@ -58,9 +60,9 @@ export default function JobCard({ job, currentUserEmail, onUpdate }) {
       onUpdate();
     } catch (err) {
       if (err.response?.status === 409) {
-        alert('Already applied to this job.');
+        setError('Already applied to this job.');
       } else {
-        alert(`Error: ${err.message}`);
+        setError(`Error: ${err.message}`);
       }
     } finally {
       setApplying(false);
@@ -154,6 +156,7 @@ export default function JobCard({ job, currentUserEmail, onUpdate }) {
 
       {showForm && !isJobCreator && (
         <form className="apply-form" onSubmit={handleApply}>
+          {error && <div className="error-banner" style={{ color: 'red', marginBottom: '10px' }}>{error}</div>}
           <input
             type="text"
             placeholder="Full Name"
